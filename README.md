@@ -1,1 +1,1 @@
-# LiteGD
+# Lite-GD
