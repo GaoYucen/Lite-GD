@@ -3,6 +3,25 @@ import torch.nn as nn
 from torch.nn import Parameter
 import torch.nn.functional as F
 
+from config import get_config
+
+params, _ = get_config()
+
+if params.gpu and params.sys == 'win' and torch.cuda.is_available():
+    USE_CUDA = True
+    USE_MPS = False
+    device = torch.device('cuda:0')
+    print('Using GPU, %i devices.' % torch.cuda.device_count())
+elif params.gpu and params.sys == 'mac':
+    USE_CUDA = False
+    USE_MPS = True
+    device = torch.device('mps')
+    print('Using MPS')
+else:
+    USE_CUDA = False
+    USE_MPS = False
+    device = torch.device('cpu')
+    print('Using CPU')
 
 class Encoder(nn.Module):
     """
@@ -166,6 +185,7 @@ class Decoder(nn.Module):
         # Used for propagating .cuda() command
         self.mask = Parameter(torch.ones(1), requires_grad=False)
         self.runner = Parameter(torch.zeros(1), requires_grad=False)
+        self.one_hot = Parameter(torch.zeros(1), requires_grad=False)
 
     def forward(self, embedded_inputs,
                 decoder_input,
@@ -227,19 +247,51 @@ class Decoder(nn.Module):
             return hidden_t, c_t, output
 
         # Recurrence loop
-        for _ in range(input_length):
+        for _ in range(params.seq_len):
+            # print(_)
             h_t, c_t, outs = step(decoder_input, hidden)
             hidden = (h_t, c_t)
 
+            # print(outs[0])
+            # print(mask[0])
             # Masking selected inputs
-            masked_outs = outs * mask
+            tmp_mask = self.mask.repeat(input_length).unsqueeze(0).repeat(batch_size, 1)
+            if (_ == 0):
+                tmp_mask[:, 0] = 0
+            elif (_ == 1) or (_ == 2):
+                tmp_mask[:, 0] = 0
+                tmp_mask[:, 11:-1] = 0
+            elif (_ == 3) or (_ == 4):
+                tmp_mask[:, 0:11] = 0
+            cur_mask = torch.where((tmp_mask == 0) & (mask == 0), torch.zeros_like(tmp_mask), torch.max(tmp_mask, mask))
+            masked_outs = outs * cur_mask
+            # print(masked_outs[0])
 
             # Get maximum probabilities and indices
             max_probs, indices = masked_outs.max(1)
             one_hot_pointers = (runner == indices.unsqueeze(1).expand(-1, outs.size()[1])).float()
 
+            # 假设one_hot_pointers_can是你的张量，我们先创建一个全0的张量作为例子
+            one_hot_pointers_can= self.one_hot.repeat(params.can_len).unsqueeze(0).repeat(batch_size, 1)
+            # one_hot_pointers_can = torch.zeros((batch_size, params.can_len)).to(device)
+
+            # 计算每一行中1的起始位置
+            start_positions = ((indices - 1) / 5).int() * 5 + 1
+
+            # 将每一行中1的起始位置及其后面的四个位置设为1
+            for i in range(batch_size):
+
+                if indices[i] == 0:
+                    start = 0
+                    end = 1
+                else:
+                    start = start_positions[i]
+                    end = start + 5 if start + 5 <= 21 else 21  # 确保索引不超过列的数量
+                one_hot_pointers_can[i, start:end] = 1
             # Update mask to ignore seen indices
-            mask  = mask * (1 - one_hot_pointers)
+            # print(one_hot_pointers_can[0])
+            mask  = mask * (1 - one_hot_pointers_can)
+            # print(mask[0])
 
             # Get embedded inputs by max indices
             embedding_mask = one_hot_pointers.unsqueeze(2).expand(-1, -1, self.embedding_dim).byte()
@@ -277,7 +329,7 @@ class PointerNet(nn.Module):
         super(PointerNet, self).__init__()
         self.embedding_dim = embedding_dim
         self.bidir = bidir
-        self.embedding = nn.Linear(7, embedding_dim)
+        self.embedding = nn.Linear(params.input_dimen, embedding_dim)
         self.encoder = Encoder(embedding_dim,
                                hidden_dim,
                                lstm_layers,
