@@ -2,18 +2,22 @@
 
 - Environment
   - python 3.8
-  - pytorch 1.12
-
+  - pytorch 2.1.0
 - Sim data
-  - R1-link.csv：original data for the Chengdu road network
-  - chengdu_link_feature.txt: linkid, snode long, snode lat, enode long, enode lat, length, 0, 1
-  - chengdu_node.txt：node id, longtitude, latitude, label
-  - chengdu_link.txt：link id, snode, enode, length
-  - chengdu_order_1000.txt: order id, edge list, ratio list
-  - chengdu_label_1000.txt：order id, sequence, determined edge, node_path, edge_path, route_length
+  - R1-link-mod.txt：original data for the Chengdu road network
+  - chengdu_node-mod.txt：node list
+  - chengdu_link-mod.txt：link list
+  - chengdu_sample.txt:  order list
+  - chengdu_label.txt：supervised optimal solution for orders
+  - data_generate.py: generate the shortest distance matrix file
 - code
   - Lite-GD: our proposed method
   - Disgreedy: greedy method based on the distance
   - Pointer Network: end-to-end supervised model
   - AM: combine RL with encoder-decoder framework
   - Graph2Route: the method for personalized takeaway delivery service
+- To run
+  - to train a new model
+    - `python code/Lite-GD/train.py`
+  - to validate the existing model
+    - `python code/Lite-GD/val.py'`
