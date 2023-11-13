@@ -20,4 +20,4 @@
   - to train a new model
     - `python code/Lite-GD/train.py`
   - to validate the existing model
-    - `python code/Lite-GD/val.py'`
+    - `python code/Lite-GD/val.py`
