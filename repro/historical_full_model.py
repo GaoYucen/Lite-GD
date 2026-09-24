@@ -12,6 +12,12 @@ from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import dijkstra
 from historical_chengdu import load_edges, load_orders, load_labels, recover_cases
 
+# Four historical cases cannot be assigned uniquely from the retained source
+# files: the old selected edge is shared by two same-parity candidate groups.
+# Final reproduction metrics exclude them instead of arbitrarily choosing one
+# semantic passenger mapping.
+AMBIGUOUS_GROUP_CASES={51,244,620,873}
+
 def seed_all(s):
     random.seed(s); np.random.seed(s); torch.manual_seed(s)
     if torch.cuda.is_available(): torch.cuda.manual_seed_all(s)
@@ -60,6 +66,7 @@ class HistoricalExact:
         self.D=dijkstra(csr_matrix((vv,(rr,cc)),shape=(self.n_nodes,self.n_nodes)),directed=True)
 
         self.max_points=max(1+sum(len(g) for g in c.candidate_groups) for c in self.cases)
+        self._case_cache={}
 
     def point_coord(self,eid,ratio):
         r=self.edges.loc[int(eid)];q=float(ratio)
@@ -76,13 +83,18 @@ class HistoricalExact:
     def split(self,seed):
         rng=np.random.default_rng(seed);out=[[],[],[]]
         for p in sorted(set(c.passenger_count for c in self.cases)):
-            ids=np.array([c.case_id for c in self.cases if c.passenger_count==p],dtype=np.int64)
+            ids=np.array([c.case_id for c in self.cases
+                          if c.passenger_count==p and c.case_id not in AMBIGUOUS_GROUP_CASES],
+                         dtype=np.int64)
             ids=rng.permutation(ids);a=int(.8*len(ids));b=int(.9*len(ids))
             for z,x in zip(out,[ids[:a],ids[a:b],ids[b:]]):z.extend(map(int,x))
         return out
 
     def case_tensors(self,cid):
-        c=self.case_by_id[int(cid)];ex=self.exact[int(cid)]
+        cid=int(cid)
+        if cid in self._case_cache:
+            return self._case_cache[cid]
+        c=self.case_by_id[cid];ex=self.exact[cid]
         # semantic groups keyed by event type
         groups={int(g[0].event_type):g for g in c.candidate_groups if g}
         n_events=2*c.passenger_count
@@ -120,8 +132,10 @@ class HistoricalExact:
             target.append(hits[0])
 
         pts=np.stack([self.point_coord(e,r) for e,r,_,_ in flat])
-        return dict(cid=int(cid),role=role,ratio=rval,node_y=ny,edge_y=ey,flat=flat,points=pts,
-                    target=np.asarray(target,np.int64),opt=float(ex["exact_length"]),n_events=n_events)
+        out=dict(cid=cid,role=role,ratio=rval,node_y=ny,edge_y=ey,flat=flat,points=pts,
+                 target=np.asarray(target,np.int64),opt=float(ex["exact_length"]),n_events=n_events)
+        self._case_cache[cid]=out
+        return out
 
 class Cases(Dataset):
     def __init__(self,data,ids):self.data=data;self.ids=list(ids)
@@ -351,6 +365,8 @@ def main():
     ap.add_argument("--epochs",type=int,default=70);ap.add_argument("--lr",type=float,default=5e-4);ap.add_argument("--patience",type=int,default=12)
     a=ap.parse_args()
     data=HistoricalExact(a.links,a.orders,a.labels,a.exact);rows=[]
+    print("excluded_ambiguous_cases",sorted(AMBIGUOUS_GROUP_CASES),
+          "evaluation_cases",len(data.cases)-len(AMBIGUOUS_GROUP_CASES))
     for s in a.seeds:rows+=run(s,a,data)
     summary={}
     for p in (False,True):
