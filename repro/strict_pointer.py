@@ -199,7 +199,7 @@ class PointerDecoder(nn.Module):
             greedy = logits.argmax(dim=1)
             logits_steps.append(logits)
 
-            if self.training and teacher_forcing and target is not None:
+            if teacher_forcing and target is not None:
                 chosen = target[:, step + 1]
             else:
                 chosen = greedy
@@ -238,8 +238,9 @@ def evaluate(model, loader, D, raw, device, mask_mode):
     for batch in loader:
         x = batch["x"].to(device)
         y = batch["target"].to(device)
-        logits, pred = model(x, target=None, mask_mode=mask_mode, teacher_forcing=False)
-        loss_sum += float(ce(logits.reshape(-1, 21), y[:, 1:].reshape(-1)))
+        logits_tf, _ = model(x, target=y, mask_mode=mask_mode, teacher_forcing=True)
+        _, pred = model(x, target=None, mask_mode=mask_mode, teacher_forcing=False)
+        loss_sum += float(ce(logits_tf.reshape(-1, 21), y[:, 1:].reshape(-1)))
         token_n += y[:, 1:].numel()
         p = pred.cpu().numpy()
         yy = y.cpu().numpy()
