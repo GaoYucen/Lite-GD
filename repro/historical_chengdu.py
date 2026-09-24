@@ -179,9 +179,18 @@ def recover_cases(edges: pd.DataFrame, orders, labels) -> List[Case]:
         if len(event_seq) != len(selected):
             raise ValueError(f"case {cid}: event/selected lengths differ")
 
-        # event types are exactly one per candidate group after driver
+        # The historical order file stores candidate groups as all pickup
+        # groups first, then all drop-off groups.  The event sequence instead
+        # uses interleaved semantic ids: 0=P1 pickup, 1=P1 drop, 2=P2 pickup,
+        # 3=P2 drop, ...  This convention was implicit in MCRP_Net.py through
+        # is_driver codes 2/4/6 (pickup) and 3/5/7 (dropoff).
         event_groups = order_edges[1:]
         ratio_groups = order_ratios[1:]
+        passenger_count = len(event_groups) // 2
+        group_event_types = (
+            [2 * p for p in range(passenger_count)] +
+            [2 * p + 1 for p in range(passenger_count)]
+        )
         if sorted(event_seq[1:]) != list(range(len(event_groups))):
             raise ValueError(f"case {cid}: event sequence is not a permutation")
 
@@ -190,11 +199,13 @@ def recover_cases(edges: pd.DataFrame, orders, labels) -> List[Case]:
             chosen_by_event[int(event_type)] = int(edge_id)
 
         candidate_groups: List[List[Candidate]] = []
-        for event_type, (group, ratios) in enumerate(zip(event_groups, ratio_groups)):
+        for group_index, (event_type, group, ratios) in enumerate(
+            zip(group_event_types, event_groups, ratio_groups)
+        ):
             if chosen_by_event[event_type] not in group:
                 raise ValueError(
                     f"case {cid}: chosen edge {chosen_by_event[event_type]} "
-                    f"not in event group {event_type}"
+                    f"not in semantic event {event_type} / stored group {group_index}"
                 )
             g = []
             for local_index, (eid, ratio) in enumerate(zip(group, ratios)):
@@ -202,7 +213,7 @@ def recover_cases(edges: pd.DataFrame, orders, labels) -> List[Case]:
                 lon, lat = point_on_edge(row, float(ratio))
                 g.append(Candidate(
                     edge_id=int(eid), ratio=float(ratio),
-                    event_type=event_type, group_index=event_type,
+                    event_type=event_type, group_index=group_index,
                     local_index=local_index, lon=lon, lat=lat,
                     is_optimal_choice=(int(eid) == chosen_by_event[event_type]),
                 ))
