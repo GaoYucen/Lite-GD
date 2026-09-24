@@ -250,3 +250,12 @@ A trustworthy reproduction should satisfy all of the following:
 - result stable across seeds;
 - no claim of matching the published table unless the benchmark itself is actually equivalent.
 
+
+
+## 9. Exact-label result snapshot
+
+Detailed numbers are maintained in [REPRO_RESULTS_20260925.md](REPRO_RESULTS_20260925.md).
+
+After replacing the archived pickup-first targets with exact paper-precedence labels, the current three-seed online core reaches **4.68% mean route gap** with GCN + distance/angle feature crossover + gating. This is a real held-out improvement over the strict archived PointerNet (5.55%) and nearest-feasible greedy (6.04%), but the exact-sequence accuracy remains low (~5.33%) and the retained 1,000-case benchmark is not the paper's 10,000-case Chengdu benchmark.
+
+The next scientific gate is therefore the paper's node/edge supervised pre-training on recovered edge+ratio cases, not additional tuning of the simplified PointerNet.
