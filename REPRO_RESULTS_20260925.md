@@ -181,3 +181,53 @@ A pre-training component is retained only if its held-out improvement is stable 
 - the published 10,000-case Chengdu table;
 - full WWW/TMC figures and efficiency table.
 
+
+
+## 9. Historical edge+ratio exact-label audit
+
+The older edge-level development set is closer to the WWW/TMC formulation than the simplified 21-node tensor:
+
+- 1,000 cases;
+- 950 two-passenger cases;
+- 50 three-passenger cases;
+- candidate edge IDs and edge ratios;
+- complete historical node/edge routes.
+
+It is usable as an **input source**, but its historical labels are not reliable ground truth.
+
+A paper-precedence exact solver was run directly on the recovered edge+ratio candidate points with one unified directed point-on-edge metric. The old selected sequences were then re-evaluated under exactly the same metric, rather than comparing against the historical stored `route_length`.
+
+| Historical edge+ratio audit | Value |
+|---|---:|
+| Cases | 1,000 |
+| Old selected sequences that remain exact-optimal | **130** |
+| Mean old-solution gap vs exact OPT | **21.32%** |
+| Median gap | **17.07%** |
+| 95th-percentile gap | **57.68%** |
+| Maximum gap | **142.44%** |
+| Negative-gap cases below tolerance | **0** |
+| Exact solutions using interleaved pickup/drop order | **420** |
+| Cases whose selected candidate sequence changes | **888** |
+
+There are 342 occurrences where an old selected edge ID appears more than once inside the same semantic event's candidate list. All 342 duplicates have the **same candidate ratio**, so the selected road point is still unique geometrically; none of the 21.32% gap is caused by choosing the wrong ratio for a duplicate edge ID.
+
+This audit strengthens the main conclusion:
+
+> Historical edge-level files should be used to reconstruct inputs and supervision structure, but their saved “optimal” labels should not be used for training or evaluation.
+
+The regenerated exact edge+ratio cases are the basis for the next node/edge pre-training experiment.
+
+## 10. Pre-training implementation gate
+
+Before testing the paper's pre-training, the joint encoder was corrected to make node states **case-conditioned**:
+
+`edge static features + candidate event type + candidate ratio -> edge embedding -> incident-node aggregation -> node update -> endpoint attention -> edge update`.
+
+This is necessary because route-membership node labels are case-specific. A static coordinate-only node GCN cannot learn a different node label for different MCRP cases.
+
+The pre-training pilot compares the same joint GCN + distance/angle crossover + gating + precedence decoder:
+
+- from scratch; versus
+- initialized by exact-route node binary classification + edge four-class classification.
+
+The pilot is retained only if held-out route quality improves, after which it will be repeated over multiple seeds.
