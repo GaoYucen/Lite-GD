@@ -182,7 +182,7 @@ class LiteGDCore(nn.Module):
             score=score.masked_fill(self.mask(selected,h.device),-1e9)
             greedy=score.argmax(dim=1)
             logits_list.append(score); greedy_list.append(greedy)
-            if self.training and teacher_forcing and target is not None:
+            if teacher_forcing and target is not None:
                 chosen=target[:,step+1]
             else:
                 chosen=greedy
@@ -204,8 +204,9 @@ def evaluate(model,loader,D,raw,device):
     ce=nn.CrossEntropyLoss(reduction="sum")
     for batch in loader:
         coords=batch["coords"].to(device); ids=batch["ids"].to(device); y=batch["target"].to(device)
-        logits,p=model(coords,ids)
-        loss_sum+=float(ce(logits.reshape(-1,21),y[:,1:].reshape(-1))); n_tok+=y[:,1:].numel()
+        logits_tf,_=model(coords,ids,target=y,teacher_forcing=True)
+        _,p=model(coords,ids,target=None,teacher_forcing=False)
+        loss_sum+=float(ce(logits_tf.reshape(-1,21),y[:,1:].reshape(-1))); n_tok+=y[:,1:].numel()
         pp=p.cpu().numpy(); yy=y.cpu().numpy()
         exact+=int(np.sum(np.all(pp==yy,axis=1))); tok+=int(np.sum(pp[:,1:]==yy[:,1:])); cases+=len(pp)
         for j in range(len(pp)):
