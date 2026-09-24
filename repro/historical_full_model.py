@@ -153,36 +153,42 @@ class JointEncoder(nn.Module):
         self.register_buffer("edge_base",torch.tensor(edge_base))
         self.register_buffer("src",torch.tensor(src,dtype=torch.long))
         self.register_buffer("dst",torch.tensor(dst,dtype=torch.long))
+        deg=np.zeros(len(node_feat),np.float32)
+        np.add.at(deg,src,1);np.add.at(deg,dst,1)
+        self.register_buffer("node_deg",torch.tensor(np.maximum(deg,1.0)).view(1,-1,1))
         self.node_in=nn.Sequential(nn.Linear(2,h),nn.ReLU(),nn.Linear(h,h))
         self.edge_in=nn.Sequential(nn.Linear(19,h),nn.ReLU(),nn.Linear(h,h))
         self.node_up=nn.ModuleList([nn.Linear(2*h,h),nn.Linear(2*h,h)])
         self.eq=nn.ModuleList([nn.Linear(h,h,bias=False),nn.Linear(h,h,bias=False)])
         self.ek=nn.ModuleList([nn.Linear(h,h,bias=False),nn.Linear(h,h,bias=False)])
         self.edge_up=nn.ModuleList([nn.Linear(2*h,h),nn.Linear(2*h,h)])
-    def node_layers(self):
-        h=torch.relu(self.node_in(self.node_feat));layers=[h]
-        for up in self.node_up:
-            agg=torch.zeros_like(h);deg=torch.zeros(h.size(0),1,device=h.device)
-            agg.index_add_(0,self.dst,h[self.src]);agg.index_add_(0,self.src,h[self.dst])
-            one=torch.ones(self.src.numel(),1,device=h.device)
-            deg.index_add_(0,self.dst,one);deg.index_add_(0,self.src,one)
-            agg=agg/deg.clamp_min(1);h=torch.relu(up(torch.cat([h,agg],-1)));layers.append(h)
-        return layers
+
     def forward(self,role,ratio):
-        # role/ratio B x E x 7
-        B=role.size(0);base=self.edge_base.unsqueeze(0).expand(B,-1,-1)
+        # Case-conditioned joint message passing:
+        # edge(candidate type/ratio) -> incident nodes -> edges.
+        B=role.size(0)
+        n=torch.relu(self.node_in(self.node_feat)).unsqueeze(0).expand(B,-1,-1)
+        base=self.edge_base.unsqueeze(0).expand(B,-1,-1)
         e=torch.relu(self.edge_in(torch.cat([base,role,ratio],-1)))
-        nl=self.node_layers()
-        for l,up in enumerate(self.edge_up):
-            v=torch.stack([nl[l][self.src],nl[l][self.dst]],2) # E,H,2
-            q=self.eq[l](e)
-            k=self.ek[l](v.permute(0,2,1)).permute(0,2,1) # E,H,2
-            score=(q.unsqueeze(-1)*k.unsqueeze(0)).sum(2)/math.sqrt(self.h) # B,E,2
-            a=torch.softmax(score,-1)
-            vv=v.unsqueeze(0).expand(B,-1,-1,-1).permute(0,1,3,2) # B,E,2,H
-            agg=(a.unsqueeze(-1)*vv).sum(2)
-            e=torch.relu(up(torch.cat([e,agg],-1)))
-        return nl[-1],e
+
+        for l in range(2):
+            # Candidate-conditioned edge messages make node representations
+            # different across cases, which is required by route-membership
+            # node pre-training.
+            agg=torch.zeros_like(n)
+            agg.index_add_(1,self.src,e)
+            agg.index_add_(1,self.dst,e)
+            agg=agg/self.node_deg
+            n=torch.relu(self.node_up[l](torch.cat([n,agg],-1)))
+
+            # Paper-style endpoint aggregation back into each road edge.
+            v=torch.stack([n[:,self.src],n[:,self.dst]],2)  # B,E,2,H
+            q=self.eq[l](e).unsqueeze(2)                     # B,E,1,H
+            k=self.ek[l](v)                                  # B,E,2,H
+            a=torch.softmax((q*k).sum(-1)/math.sqrt(self.h),dim=2)
+            endpoint=(a.unsqueeze(-1)*v).sum(2)
+            e=torch.relu(self.edge_up[l](torch.cat([e,endpoint],-1)))
+        return n,e
 
 class PaperDecoder(nn.Module):
     def __init__(self,h,max_points):
@@ -245,7 +251,7 @@ class Model(nn.Module):
         nh,eh=self.encode(b)
         if balanced:
             # Sample all positives/special edges plus <=5x random 'neither' edges.
-            node_logits=self.node_head(nh).unsqueeze(0).expand(b["node_y"].size(0),-1,-1)
+            node_logits=self.node_head(nh)
             ny=b["node_y"];pos=(ny==1)
             posw=(~pos).sum().float()/pos.sum().clamp_min(1).float()
             nw=torch.tensor([1.0,float(min(posw,30))],device=ny.device)
@@ -257,7 +263,7 @@ class Model(nn.Module):
             keep=keep | ((ey==1)&(rand<prob))
             el=nn.functional.cross_entropy(logits[keep],ey[keep])
         else:
-            node_logits=self.node_head(nh).unsqueeze(0).expand(b["node_y"].size(0),-1,-1)
+            node_logits=self.node_head(nh)
             nl=nn.functional.cross_entropy(node_logits.reshape(-1,2),b["node_y"].reshape(-1))
             el=nn.functional.cross_entropy(self.edge_head(eh).reshape(-1,4),b["edge_y"].reshape(-1))
         return nl+el,nl.detach(),el.detach()
