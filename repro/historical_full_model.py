@@ -278,14 +278,15 @@ def attach_edge_indices(batch,data):
 def move(b,dev):
     return {k:(v.to(dev) if torch.is_tensor(v) else v) for k,v in b.items()}
 
-def loaders(data,ids,batch=6):
+def loaders(data,ids,batch=6,shuffle=False,seed=0):
     ds=Cases(data,ids)
     def cf(items):
         attach_edge_indices(items,data);return collate(items)
-    return DataLoader(ds,batch_size=batch,shuffle=True,collate_fn=cf,num_workers=0)
+    gen=torch.Generator().manual_seed(seed) if shuffle else None
+    return DataLoader(ds,batch_size=batch,shuffle=shuffle,collate_fn=cf,num_workers=0,generator=gen)
 
 def eval_model(model,loader,data,dev):
-    model.eval();gaps=[];exact=0;ptr=0;tot=0;illegal=0
+    model.eval();gaps=[];pred_lengths=[];opt_lengths=[];exact=0;ptr=0;tot=0;illegal=0
     with torch.no_grad():
         for b in loader:
             raw=b["raw"];b=move(b,dev);_,p=model.decoder_loss(b,teacher=False);p=p.cpu()
@@ -297,15 +298,20 @@ def eval_model(model,loader,data,dev):
                 flat=x["flat"];L=0.0
                 for a,z in zip(seq[:-1],seq[1:]):
                     ea,ra,_,_=flat[a];eb,rb,_,_=flat[z];L+=data.point_dist(ea,ra,eb,rb)
-                gaps.append((L/x["opt"]-1)*100)
-    return dict(gap=float(np.mean(gaps)),gap_std=float(np.std(gaps)),exact=100*exact/len(gaps),pointer=100*ptr/tot,illegal=illegal)
+                gaps.append((L/x["opt"]-1)*100);pred_lengths.append(L);opt_lengths.append(x["opt"])
+    ratio_gap=(float(np.mean(pred_lengths))/float(np.mean(opt_lengths))-1)*100
+    return dict(gap=ratio_gap,mean_case_gap=float(np.mean(gaps)),gap_std=float(np.std(gaps)),
+                avg_pred_length=float(np.mean(pred_lengths)),avg_opt_length=float(np.mean(opt_lengths)),
+                exact=100*exact/len(gaps),pointer=100*ptr/tot,illegal=illegal)
 
 def run(seed,args,data):
     seed_all(seed);tr,va,te=data.split(seed);dev=torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    train=loaders(data,tr,args.batch);val=loaders(data,va,args.batch);test=loaders(data,te,args.batch)
     out=[]
     for use_pre in (False,True):
         seed_all(seed)
+        train=loaders(data,tr,args.batch,shuffle=True,seed=seed)
+        val=loaders(data,va,args.batch,shuffle=False,seed=seed)
+        test=loaders(data,te,args.batch,shuffle=False,seed=seed)
         model=Model(data,args.hidden).to(dev)
         if use_pre:
             opt=torch.optim.AdamW(model.parameters(),lr=args.pre_lr,weight_decay=1e-4)
