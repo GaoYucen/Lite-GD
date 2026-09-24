@@ -14,6 +14,37 @@ def parse_parts(line, cast=int):
     p=[x for x in line.split(";") if x]
     return cast(p[0]), [[cast(z) for z in x.split(",") if z] for x in p[1:]]
 
+def recover_group_types(groups, seq, selected):
+    """Recover case-specific passenger/type assignment for each candidate set.
+
+    Source files store pickup groups first and drop groups second, but passenger
+    order inside each half is permuted per case. Labels provide type ids
+    (pickup i -> 2*i, drop i -> 2*i+1) and the selected edge.
+    """
+    q=len(groups)//2
+    result=[None]*len(groups)
+    ambiguous=0
+    for parity,grange in ((0,range(q)),(1,range(q,2*q))):
+        items=[(typ,e) for typ,e in zip(seq[1:],selected[1:]) if typ%2==parity]
+        choices={typ:[g for g in grange if e in groups[g]] for typ,e in items}
+        sols=[]
+        def bt(k,used,cur):
+            if k==len(items):
+                sols.append(cur.copy()); return
+            typ,_=items[k]
+            for g in choices[typ]:
+                if g not in used:
+                    used.add(g);cur[typ]=g;bt(k+1,used,cur);used.remove(g);cur.pop(typ)
+        bt(0,set(),{})
+        if not sols:
+            raise RuntimeError(f"cannot recover group semantics: seq={seq}, selected={selected}")
+        ambiguous += max(0,len(sols)-1)
+        sol=sols[0]
+        for typ,g in sol.items(): result[g]=typ
+    if any(x is None for x in result):
+        raise RuntimeError("incomplete group semantics")
+    return result,ambiguous
+
 def load():
     links=pd.read_csv(DATA/"chengdu_link.txt",sep=r"\s+",header=None,names=["id","u","v","w","flag"])
     edge={int(r.id):(int(r.u),int(r.v),float(r.w)) for r in links.itertuples(index=False)}
@@ -40,17 +71,20 @@ def point_distance(edge,sd,a,ra,b,rb):
         val=min(val,(rb-ra)*wa)
     return float(val)
 
-def exact_dp(edge,sd,car,groups,car_ratio,ratios):
-    m=len(groups); q=m//2
+def exact_dp(edge,sd,car,groups,car_ratio,ratios,group_types):
+    m=len(groups)
+    type_to_group={typ:g for g,typ in enumerate(group_types)}
+    prereq={}
+    for g,typ in enumerate(group_types):
+        if typ%2==1: prereq[g]=type_to_group[typ-1]
     pts=[list(zip(groups[g],ratios[g])) for g in range(m)]
-    # state: (visited-group mask, final edge, final ratio) -> (cost,path)
     dp={(0,car,car_ratio):(0.0,[])}
     for _ in range(m):
         nd={}
         for (mask,e,r),(cost,path) in dp.items():
             for g in range(m):
                 if mask>>g&1: continue
-                if g>=q and not (mask>>(g-q)&1): continue
+                if g in prereq and not (mask>>prereq[g]&1): continue
                 for ee,rr in pts[g]:
                     key=(mask|1<<g,ee,rr)
                     val=cost+point_distance(edge,sd,e,r,ee,rr)
@@ -61,31 +95,27 @@ def exact_dp(edge,sd,car,groups,car_ratio,ratios):
 
 def main():
     edge,sd,orders,labels=load()
-    errs=[]; gaps=[]; edge_match=seq_match=0; counts={}
-    examples=[]
+    errs=[];gaps=[];edge_match=seq_match=0;counts={};ambiguous=0;examples=[]
     for cid,(car,groups,cr,ratios) in orders.items():
         seq,selected,label_len=labels[cid]
-        q=len(groups)//2
         counts[len(groups)]=counts.get(len(groups),0)+1
-        typemap={2*i:i for i in range(q)}|{2*i+1:q+i for i in range(q)}
+        group_types,a=recover_group_types(groups,seq,selected);ambiguous+=a
+        type_to_group={typ:g for g,typ in enumerate(group_types)}
         pp=[(car,cr)]
         for typ,e in zip(seq[1:],selected[1:]):
-            g=typemap[typ]; j=groups[g].index(e); pp.append((e,ratios[g][j]))
+            g=type_to_group[typ];j=groups[g].index(e);pp.append((e,ratios[g][j]))
         rec=sum(point_distance(edge,sd,*pp[j],*pp[j+1]) for j in range(len(pp)-1))
         errs.append(abs(rec-label_len))
 
-        best,path=exact_dp(edge,sd,car,groups,cr,ratios)
-        btypes=[2*g if g<q else 2*(g-q)+1 for g,_,_ in path]
-        bseq=[-1]+btypes
+        best,path=exact_dp(edge,sd,car,groups,cr,ratios,group_types)
+        bseq=[-1]+[group_types[g] for g,_,_ in path]
         bedges=[car]+[e for _,e,_ in path]
-        edge_match+=int(bedges==selected)
-        seq_match+=int(bseq==seq)
-        gap=(label_len-best)/best*100
-        gaps.append(gap)
+        edge_match+=int(bedges==selected);seq_match+=int(bseq==seq)
+        gap=(label_len-best)/best*100;gaps.append(gap)
         if len(examples)<10 and (abs(gap)>1e-5 or bedges!=selected):
-            examples.append((cid,seq,bseq,selected,bedges,label_len,best,gap))
+            examples.append((cid,seq,bseq,selected,bedges,label_len,best,gap,group_types))
 
-    print("case_group_counts",counts)
+    print("case_group_counts",counts,"ambiguous_semantic_matchings",ambiguous)
     print("published_route_recalc_mae",float(np.mean(errs)))
     print("published_route_recalc_p95",float(np.percentile(errs,95)))
     print("published_route_recalc_max",float(np.max(errs)))
