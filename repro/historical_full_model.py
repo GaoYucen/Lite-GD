@@ -220,7 +220,7 @@ class PaperDecoder(nn.Module):
         ge=torch.sigmoid(self.ge1(fc)+self.ge2(cand))
         rep=torch.tanh(self.merge(torch.cat([gfc*fc,ge*cand],-1)))
         state=rep[:,0];done=torch.zeros(B,6,dtype=torch.bool,device=rep.device);loss=[];preds=[]
-        for t in range(6):
+        for t in range(target.size(1)):
             score=self.v(torch.tanh(self.cand(rep)+self.state(state)[:,None,:])).squeeze(-1)
             bad=~valid | (event<0)
             for b in range(B):
