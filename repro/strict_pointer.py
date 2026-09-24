@@ -69,6 +69,34 @@ def route_length(D: np.ndarray, point_ids: Sequence[int], seq: Sequence[int]) ->
     return float(sum(D[ids[s[i]], ids[s[i + 1]]] for i in range(len(s) - 1)))
 
 
+def canonical_target(sample) -> np.ndarray:
+    """Repair archived pointer ambiguity using the semantic Opt_Seq group labels.
+
+    The legacy generator sometimes stored the index of an identical road node
+    from the wrong candidate group when that node appeared multiple times in
+    the 21-entry list.  The route node itself is correct, but such an index can
+    violate the group's decoder mask.  We keep the selected road node and map it
+    back to the candidate group specified by Opt_Seq.
+    """
+    ids = np.asarray(sample["Points_id"], dtype=np.int64)
+    old = np.asarray(sample["Solutions"], dtype=np.int64)
+    order = np.asarray(sample["Opt_Seq"], dtype=np.int64)
+    out = [0]
+    for step in range(1, len(order)):
+        group = int(order[step])  # groups are 1..4 in the archived 2-passenger data
+        node = int(ids[int(old[step])])
+        lo = 1 + (group - 1) * 5
+        hi = lo + 5
+        hits = np.flatnonzero(ids[lo:hi] == node)
+        if len(hits) == 0:
+            raise ValueError(
+                f"cannot canonicalize step={step} group={group} node={node}; "
+                f"old_pointer={int(old[step])}"
+            )
+        out.append(int(lo + hits[0]))
+    return np.asarray(out, dtype=np.int64)
+
+
 class CaseDataset(Dataset):
     def __init__(self, raw: np.ndarray, indices: np.ndarray, feature_mode: str,
                  mean: np.ndarray, std: np.ndarray):
@@ -95,7 +123,7 @@ class CaseDataset(Dataset):
         s = self.raw[int(self.indices[j])]
         return {
             "x": torch.from_numpy(self._features(s)).float(),
-            "target": torch.as_tensor(s["Solutions"], dtype=torch.long),
+            "target": torch.as_tensor(canonical_target(s), dtype=torch.long),
             "points_id": torch.as_tensor(s["Points_id"], dtype=torch.long),
             "opt_length": torch.as_tensor(float(s["Opt_Length"]), dtype=torch.float32),
             "raw_index": int(self.indices[j]),
@@ -328,6 +356,11 @@ def main():
     D = build_directed_distance(Path(args.links), Path(args.nodes))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("device", device, "torch", torch.__version__, flush=True)
+
+    repaired = 0
+    for s in raw:
+        repaired += int(not np.array_equal(canonical_target(s), np.asarray(s["Solutions"], dtype=np.int64)))
+    print("canonical_pointer_repairs", repaired, flush=True)
 
     target_patterns = {}
     for name, idx in [("train",train_idx),("val",val_idx),("test",test_idx)]:
