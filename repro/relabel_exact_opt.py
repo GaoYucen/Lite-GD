@@ -131,7 +131,8 @@ def main():
         tol = max(0.01, 1e-7 * max(1.0, new_len))
         old_equal += int(abs(old_calc - new_len) <= tol)
 
-        old_groups = [int((x - 1) // 5) for x in old_ptr[1:]]
+        old_seq = np.asarray(s["Opt_Seq"], dtype=np.int64)
+        old_groups = [int(x - 1) for x in old_seq[1:]]
         new_groups = [int((x - 1) // 5) for x in new_ptr[1:]]
         old_first_drop = min(old_groups.index(2), old_groups.index(3))
         new_first_drop = min(new_groups.index(2), new_groups.index(3))
