@@ -179,24 +179,66 @@ def recover_cases(edges: pd.DataFrame, orders, labels) -> List[Case]:
         if len(event_seq) != len(selected):
             raise ValueError(f"case {cid}: event/selected lengths differ")
 
-        # The historical order file stores candidate groups as all pickup
-        # groups first, then all drop-off groups.  The event sequence instead
-        # uses interleaved semantic ids: 0=P1 pickup, 1=P1 drop, 2=P2 pickup,
-        # 3=P2 drop, ...  This convention was implicit in MCRP_Net.py through
-        # is_driver codes 2/4/6 (pickup) and 3/5/7 (dropoff).
+        # Candidate-group order is not fully stable in the historical text:
+        # pickup groups are usually first, but drop-off groups can be permuted.
+        # Recover the semantic event id from the optimal selected edge rather
+        # than assuming a fixed storage order.  This is deterministic because
+        # every event's selected edge must belong to exactly one assigned group.
         event_groups = order_edges[1:]
         ratio_groups = order_ratios[1:]
-        passenger_count = len(event_groups) // 2
-        group_event_types = (
-            [2 * p for p in range(passenger_count)] +
-            [2 * p + 1 for p in range(passenger_count)]
-        )
         if sorted(event_seq[1:]) != list(range(len(event_groups))):
             raise ValueError(f"case {cid}: event sequence is not a permutation")
 
-        chosen_by_event = {}
-        for event_type, edge_id in zip(event_seq[1:], selected[1:]):
-            chosen_by_event[int(event_type)] = int(edge_id)
+        chosen_by_event = {
+            int(event_type): int(edge_id)
+            for event_type, edge_id in zip(event_seq[1:], selected[1:])
+        }
+
+        # Build candidate groups for each event and solve the tiny bipartite
+        # assignment (<=6 groups) by backtracking.  Ratio parity is used as a
+        # consistency cue: historical pickups are near ratio 0.001 and
+        # drop-offs near 0.999.
+        options = {}
+        for event_type, edge_id in chosen_by_event.items():
+            hits = []
+            for gi, (group, ratios) in enumerate(zip(event_groups, ratio_groups)):
+                if edge_id not in group:
+                    continue
+                mean_ratio = float(np.mean(ratios))
+                pickup_like = mean_ratio < 0.5
+                if (event_type % 2 == 0) == pickup_like:
+                    hits.append(gi)
+            if not hits:
+                # Fall back to membership only in case a future historical
+                # record uses non-extreme ratios.
+                hits = [gi for gi, group in enumerate(event_groups) if edge_id in group]
+            if not hits:
+                raise ValueError(
+                    f"case {cid}: selected edge {edge_id} for event {event_type} "
+                    "is absent from all candidate groups"
+                )
+            options[event_type] = hits
+
+        ordered_events = sorted(options, key=lambda e: (len(options[e]), e))
+        event_to_group = {}
+        used = set()
+        def assign(pos):
+            if pos == len(ordered_events):
+                return True
+            ev = ordered_events[pos]
+            for gi in options[ev]:
+                if gi in used:
+                    continue
+                used.add(gi); event_to_group[ev] = gi
+                if assign(pos + 1):
+                    return True
+                used.remove(gi); event_to_group.pop(ev, None)
+            return False
+        if not assign(0):
+            raise ValueError(f"case {cid}: cannot uniquely assign semantic events to groups")
+        group_event_types = [None] * len(event_groups)
+        for ev, gi in event_to_group.items():
+            group_event_types[gi] = ev
 
         candidate_groups: List[List[Candidate]] = []
         for group_index, (event_type, group, ratios) in enumerate(
