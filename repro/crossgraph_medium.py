@@ -64,14 +64,19 @@ def _sample_hist(hist: dict, rng: np.random.Generator, *, integer=False):
     return vals[int(rng.choice(len(vals),p=w))]
 
 
-def _sample_positive(summary: dict, rng: np.random.Generator) -> float:
-    """Approximate the empirical positive distribution from robust quantiles."""
-    q1=max(float(summary["p25"]),1e-6)
-    med=max(float(summary["median"]),1e-6)
-    q3=max(float(summary["p75"]),q1+1e-6)
-    sigma=max(0.05,(math.log(q3)-math.log(q1))/(2*0.67448975))
-    x=float(rng.lognormal(math.log(med),sigma))
-    return float(np.clip(x,max(1e-6,float(summary["p10"])),float(summary["p95"])))
+def _sample_quantiles(curve: dict, rng: np.random.Generator) -> float:
+    """Piecewise-linear inverse sampling from frozen empirical quantiles."""
+    q=np.asarray(curve["q"],dtype=np.float64)
+    v=np.asarray(curve["v"],dtype=np.float64)
+    if len(q)!=len(v) or len(q)<2 or np.any(np.diff(q)<=0):
+        raise ValueError("invalid empirical quantile curve")
+    u=float(rng.uniform(q[0],q[-1]))
+    return float(np.interp(u,q,v))
+
+
+def _quantile(curve: dict, p: float) -> float:
+    return float(np.interp(float(p),np.asarray(curve["q"],dtype=np.float64),
+                           np.asarray(curve["v"],dtype=np.float64)))
 
 
 class RoadGraph:
@@ -296,13 +301,15 @@ def main():
     rng=np.random.default_rng(args.seed)
     g=RoadGraph(args.protocol_npz,args.nodes_csv,args.edges_csv,args.allpairs,args.save_allpairs)
 
-    count_hist=proto["candidate_count_histogram"]
-    pickup_ratio_hist=proto["pickup_candidate_ratio_histogram"]
-    drop_ratio_hist=proto["dropoff_candidate_ratio_histogram"]
-    driver_ratio_hist=proto["driver_ratio_histogram"]
-    span_pick=proto["driver_to_exact_pickup_haversine_m"]
-    span_drop=proto["exact_pickup_to_own_dropoff_haversine_m"]
-    radius_stats=proto["candidate_group_radius_from_lonlat_centroid_m"]
+    count_pick=proto["candidate_count_histograms"]["pickup"]
+    count_drop=proto["candidate_count_histograms"]["dropoff"]
+    pickup_ratio_hist=proto["ratio_policy"]["pickup_candidate"]
+    drop_ratio_hist=proto["ratio_policy"]["dropoff_candidate"]
+    driver_ratio_hist=proto["ratio_policy"]["driver"]
+    curves=proto["empirical_quantiles_m"]
+    span_pick=curves["driver_to_pickup_haversine"]
+    span_drop=curves["pickup_to_dropoff_haversine"]
+    radius_stats=curves["candidate_group_radius"]
 
     N=int(args.cases);E=4;K=10
     driver_edge=np.full(N,-1,np.int32);driver_ratio=np.zeros(N,np.float32)
@@ -327,18 +334,18 @@ def main():
         pickup_xy=[]
         ok=True
         for p in range(2):
-            pr=_sample_positive(span_pick,rng)
+            pr=_sample_quantiles(span_pick,rng)
             pe=choose_edge_at_span(g,dxy,pr,rng)
             pxy=g.edge_mid_xy[pe]
-            rr=_sample_positive(span_drop,rng)
+            rr=_sample_quantiles(span_drop,rng)
             qe=choose_edge_at_span(g,pxy,rr,rng)
             anchors.extend([pe,qe]);pickup_xy.append(pxy)
 
         groups=[];ratios=[]
         for ev,anchor in enumerate(anchors):
-            cnt=int(_sample_hist(count_hist,rng,integer=True))
+            cnt=int(_sample_hist(count_pick if ev%2==0 else count_drop,rng,integer=True))
             cnt=int(np.clip(cnt,4,K))
-            radius=_sample_positive(radius_stats,rng)
+            radius=_sample_quantiles(radius_stats,rng)
             ratio=float(_sample_hist(pickup_ratio_hist if ev%2==0 else drop_ratio_hist,rng))
             es,rs=candidate_group(g,anchor,cnt,radius,ratio,rng)
             groups.append(es);ratios.append(rs)
@@ -360,9 +367,9 @@ def main():
             qxy=g.point_xy(sol["flat_e"][qi],sol["flat_r"][qi])
             dpick.append(float(np.linalg.norm(dpxy-dxy)))
             pdrop.append(float(np.linalg.norm(qxy-dpxy)))
-        if not all(0.65*float(span_pick["p10"])<=x<=1.35*float(span_pick["p95"]) for x in dpick):
+        if not all(0.65*_quantile(span_pick,.10)<=x<=1.35*_quantile(span_pick,.95) for x in dpick):
             continue
-        if not all(0.65*float(span_drop["p10"])<=x<=1.35*float(span_drop["p95"]) for x in pdrop):
+        if not all(0.65*_quantile(span_drop,.10)<=x<=1.35*_quantile(span_drop,.95) for x in pdrop):
             continue
 
         i=accepted
@@ -436,11 +443,11 @@ def main():
         "selected_pickup_to_own_dropoff_xy_m":_summary(actual_drop_span),
         "exact_route_length_m":_summary(route_lengths),
         "target_reference":{
-            "candidate_count":proto["candidate_count_per_event"],
+            "candidate_count_histograms":proto["candidate_count_histograms"],
             "candidate_group_radius_m":radius_stats,
             "driver_to_pickup_haversine_m":span_pick,
             "pickup_to_dropoff_haversine_m":span_drop,
-            "exact_route_length_m":proto["exact_route_directed_road_m"],
+            "historical_reference":proto["historical_reference"],
         },
         "artifact":{"path":str(args.out),"sha256":sha256(args.out)},
     }
