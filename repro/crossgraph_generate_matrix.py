@@ -193,7 +193,7 @@ def group_radius(points):
     return float(np.linalg.norm(p-c, axis=1).max())
 
 
-def build_case(rng, road: Road, max_attempts=200):
+def build_case(rng, road: Road, max_attempts=1000):
     m = len(road.src)
     for _ in range(max_attempts):
         driver = int(rng.integers(0, m))
