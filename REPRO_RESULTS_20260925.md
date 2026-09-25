@@ -266,3 +266,80 @@ Interpretation:
 4. **Pre-training appears to shape the representation toward lower-cost near-optimal routes rather than toward exact candidate recovery.** This is useful, but it is not sufficient to explain the TMC exact-sequence result.
 
 The next experiment therefore measures node/edge pre-training validation quality directly and tests whether pre-trained representations are being overwritten during decoder fine-tuning (lower encoder LR / staged unfreezing) before introducing the paper filters.
+
+
+## 12. Pre-training mechanism diagnostics
+
+Two representative seeds were rerun with a controlled diagnostic protocol. Pre-training is performed once, then the same pre-trained state is cloned into:
+
+- normal fine-tuning (encoder and decoder share the same LR);
+- a lower-encoder-LR fine-tuning variant.
+
+This diagnostic uses a fresh deterministic fine-tuning DataLoader order, so its absolute route gaps are mechanism tests rather than replacements for the final 3-seed table in Section 11.
+
+### 12.1 Pre-training classification quality
+
+At epoch 8, validation metrics are:
+
+| Metric | Seed 20260926 | Seed 20260927 |
+|---|---:|---:|
+| Node positive prevalence | 4.75% | 4.41% |
+| Node positive F1 | **19.82%** | **16.81%** |
+| Edge raw accuracy | 97.49% | 97.47% |
+| Edge macro-F1 | **57.24%** | **57.51%** |
+| Candidate-only F1 | 90.25% | 89.89% |
+| Neither F1 | 98.76% | 98.75% |
+| Route-only F1 | **11.01%** | **11.87%** |
+| Candidate-and-route F1 | **28.96%** | **29.51%** |
+
+Raw edge accuracy is misleading because the validation graph contains roughly 582k “neither” edges, versus only ~8–9k route-only edges and ~0.6k candidate-and-route edges.
+
+The key failure mode is therefore explicit:
+
+> the current pre-training learns candidate membership/background well, but learns exact-route relevance poorly.
+
+This explains why route gap can improve while exact candidate-sequence recovery remains weak.
+
+### 12.2 Fine-tuning does not appear to overwrite a good pre-trained encoder
+
+Controlled diagnostic route gaps:
+
+| Seed | Scratch | Pretrain, same LR | Pretrain, lower encoder LR |
+|---|---:|---:|---:|
+| 20260926 | 5.96% | **4.79%** | 6.89% |
+| 20260927 | 6.45% | **5.80%** | 6.75% |
+
+Lowering the encoder LR makes both seeds worse. The main bottleneck is therefore **not** catastrophic overwriting during decoder fine-tuning; the pre-training signal itself needs to become more route-discriminative.
+
+### 12.3 Two-passenger and three-passenger behavior differ sharply
+
+Seed 20260926:
+
+| Strategy | 2-passenger Gap (95 test cases) | 3-passenger Gap (5 test cases) |
+|---|---:|---:|
+| Scratch | 4.08% | 32.82% |
+| Pretrain, same LR | **3.84%** | **18.37%** |
+| Pretrain, lower encoder LR | 4.41% | 42.35% |
+
+Seed 20260927:
+
+| Strategy | 2-passenger Gap (95 test cases) | 3-passenger Gap (5 test cases) |
+|---|---:|---:|
+| Scratch | 5.25% | 23.88% |
+| Pretrain, same LR | **4.22%** | 28.67% |
+| Pretrain, lower encoder LR | 5.30% | 27.67% |
+
+For two passengers, normal pre-training improves both representative seeds. Three-passenger behavior is unstable and much worse in absolute quality.
+
+After excluding four ambiguous two-passenger cases, the retained dataset has 946 two-passenger and only 50 three-passenger cases. The stratified 8:1:1 split therefore gives only about **40 three-passenger training cases and 5 three-passenger test cases per seed**. A one-case change is 20% of the three-passenger test set.
+
+### 12.4 Next optimization gate
+
+The next experiment keeps the paper four-class edge objective but adds:
+
+1. a route/non-route auxiliary loss derived from the same four labels, to explicitly penalize:
+   - route-only -> neither;
+   - candidate-and-route -> candidate-only;
+2. a moderate 5x repeat of three-passenger training cases, with validation/test untouched.
+
+These are tested separately and together before any filter or larger model is introduced.
