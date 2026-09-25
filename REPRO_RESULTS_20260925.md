@@ -441,3 +441,75 @@ For the recovered historical benchmark, the current preferred model is:
 - rule-constrained pointer decoder.
 
 This configuration is currently the most stable full-model reconstruction on the available edge+ratio data. It is still **not** a reproduction of the published 10k benchmark because that benchmark is absent from the repository history.
+
+
+## 15. Fixed-split learning-baseline closure
+
+To remove a confound in the earlier multi-seed experiments, the comparison protocol now
+**freezes one train/validation/test split** and varies only training randomness:
+
+- split seed: `20260925`;
+- retained historical edge+ratio cases: 996;
+- exact paper-precedence labels;
+- the same 8:1:1 split for every method;
+- training seeds: `1234, 4321, 2468`;
+- primary metrics for the current reproduction stage:
+  - **Mean-case Gap**;
+  - **Event-step Accuracy**.
+
+PointerNet and AM are adapted from the clean, already exercised GroupOpt/ASCC
+implementations in `GaoYucen/Ptr-net-GT`.  PointerNet retains supervised
+exact-sequence training.  AM retains REINFORCE route-cost training.  Both share the
+same carpool legality mask and directed-road evaluation as Lite-GD.
+
+The AM implementation is currently described conservatively as **AM-style /
+Kool-compatible** until the final semantic equivalence audit against the archived
+`code/attention-learn-to-route` implementation is complete.
+
+| Method | Mean-case Gap ↓ | Event-step Acc ↑ |
+|---|---:|---:|
+| DisGreedy-corrected | **7.91%** | **61.71%** |
+| PointerNet | **9.25% ± 0.05%** | **80.00% ± 1.63%** |
+| AM-style | **15.02% ± 1.35%** | **63.09% ± 2.00%** |
+| **Lite-GD (candidate-aware full reconstruction)** | **6.63% ± 0.09%** | **80.57% ± 2.19%** |
+
+Per-seed primary results:
+
+| Method | Seed 1234 Gap / Event-step | Seed 4321 Gap / Event-step | Seed 2468 Gap / Event-step |
+|---|---:|---:|---:|
+| PointerNet | 9.17% / 80.49% | 9.29% / 81.71% | 9.28% / 77.80% |
+| AM-style | 13.27% / 65.37% | 15.22% / 63.41% | 16.57% / 60.49% |
+| Lite-GD | 6.71% / 77.80% | 6.67% / 80.73% | 6.51% / 83.17% |
+
+Secondary diagnostics are still saved in each JSON, but they are not the main
+decision criteria for this stage.  Three-seed means include:
+
+| Method | Candidate-by-event | Event-order exact | Exact sequence |
+|---|---:|---:|---:|
+| PointerNet | 25.61% | 66.67% | 0.33% |
+| AM-style | 20.81% | 45.67% | 0.00% |
+| Lite-GD | **40.81%** | 65.33% | **3.00%** |
+
+### Interpretation
+
+1. **Lite-GD has a clear route-quality advantage over the two learning baselines**
+   under a genuinely matched test split.  Its Mean-case Gap is about 2.62 points
+   lower than PointerNet and 8.39 points lower than AM-style.
+2. **Event ordering alone does not explain the gap advantage.** PointerNet and
+   Lite-GD have nearly identical Event-step Accuracy (80.00% vs 80.57%), while
+   Lite-GD is substantially better in route quality.
+3. The stronger discriminator is candidate selection: Lite-GD reaches about
+   40.8% candidate-by-event accuracy versus 25.6% for PointerNet.
+4. DisGreedy is surprisingly competitive in route gap on this small 996-case
+   benchmark, but its Event-step Accuracy is much lower.  It remains a useful
+   heuristic reference rather than a learning baseline.
+5. The fixed-split table supersedes earlier cross-seed comparisons in which the
+   split seed and training seed changed together.
+
+### Reproduction decision after baseline closure
+
+Do **not** optimize Lite-GD further yet.  The next evidence target is cross-graph
+reproduction on larger native-directed road networks, using the already audited
+`distance` project assets.  The benchmark generator must preserve the physical
+candidate/OD scale of the recovered Chengdu workload so graph size is the main
+changed variable.
