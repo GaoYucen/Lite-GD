@@ -65,13 +65,14 @@ def summarize(x):
 
 
 class Road:
-    def __init__(self, graph: Path, matrix: Path):
+    def __init__(self, graph: Path, matrix: Path, predecessor: Path | None = None):
         z = np.load(graph, mmap_mode="r")
         self.src = np.asarray(z["src"], dtype=np.int32)
         self.dst = np.asarray(z["dst"], dtype=np.int32)
         self.weight = np.asarray(z["weight"], dtype=np.float64)
         self.xy = np.asarray(z["coordinates"], dtype=np.float64)
         self.D = np.load(matrix, mmap_mode="r")
+        self.P = np.load(predecessor, mmap_mode="r") if predecessor is not None else None
         if self.D.shape != (len(self.xy), len(self.xy)):
             raise ValueError(f"matrix shape {self.D.shape} != graph node count {len(self.xy)}")
         self.pick_xy = self.xy[self.src] * 0.999 + self.xy[self.dst] * 0.001
@@ -79,6 +80,36 @@ class Road:
         self.mid_xy = (self.xy[self.src] + self.xy[self.dst]) / 2.0
         self.pick_tree = cKDTree(self.pick_xy)
         self.drop_tree = cKDTree(self.drop_xy)
+        self.pair_to_edge = {(int(u), int(v)): i for i, (u, v) in enumerate(zip(self.src, self.dst))}
+
+    def trace_segment(self, edge_a, ratio_a, edge_b, ratio_b):
+        if self.P is None:
+            raise RuntimeError("predecessor matrix was not loaded")
+        ea, eb = int(edge_a), int(edge_b)
+        ra, rb = float(ratio_a), float(ratio_b)
+        if ea == eb and rb >= ra:
+            route_edges = [ea]
+        else:
+            s, t = int(self.dst[ea]), int(self.src[eb])
+            nodes = [t]
+            cur = t
+            while cur != s:
+                cur = int(self.P[s, cur])
+                if cur < 0:
+                    raise RuntimeError(f"missing predecessor for {s}->{t}")
+                nodes.append(cur)
+            nodes.reverse()
+            middle = []
+            for u, v in zip(nodes[:-1], nodes[1:]):
+                try:
+                    middle.append(int(self.pair_to_edge[(int(u), int(v))]))
+                except KeyError as exc:
+                    raise RuntimeError(f"route arc {u}->{v} missing from standardized graph") from exc
+            route_edges = [ea] + middle + [eb]
+        route_nodes = []
+        for e in route_edges:
+            route_nodes.extend([int(self.src[e]), int(self.dst[e])])
+        return route_edges, route_nodes
 
     def point_xy(self, edge, ratio):
         e = int(edge); r = float(ratio)
@@ -225,6 +256,17 @@ def build_case(rng, road: Road, max_attempts=200):
         if not good or not np.isfinite(opt):
             continue
 
+        route_edges = None
+        route_nodes = None
+        if road.P is not None:
+            route_edges = []
+            route_nodes = []
+            seq = [0] + target
+            for a, b in zip(seq[:-1], seq[1:]):
+                ee, nn = road.trace_segment(edges[a], ratios[a], edges[b], ratios[b])
+                route_edges.extend(ee)
+                route_nodes.extend(nn)
+
         return {
             "edges": np.asarray(edges, dtype=np.int32),
             "ratios": np.asarray(ratios, dtype=np.float32),
@@ -239,6 +281,8 @@ def build_case(rng, road: Road, max_attempts=200):
                 for e, g in enumerate(groups)
             ],
             "candidate_counts": [len(g[0]) for g in groups],
+            "route_edges": None if route_edges is None else np.asarray(route_edges, dtype=np.int32),
+            "route_nodes": None if route_nodes is None else np.asarray(route_nodes, dtype=np.int32),
         }
     raise RuntimeError("unable to sample a valid matched-scale case")
 
@@ -248,6 +292,7 @@ def main():
     ap.add_argument("--dataset", required=True)
     ap.add_argument("--graph", required=True, type=Path)
     ap.add_argument("--matrix", required=True, type=Path)
+    ap.add_argument("--predecessor", type=Path)
     ap.add_argument("--cases", type=int, default=1000)
     ap.add_argument("--seed", type=int, default=20260925)
     ap.add_argument("--split-seed", type=int, default=20260925)
@@ -256,7 +301,7 @@ def main():
     args = ap.parse_args()
 
     rng = np.random.default_rng(args.seed)
-    road = Road(args.graph, args.matrix)
+    road = Road(args.graph, args.matrix, args.predecessor)
     cases = [build_case(rng, road) for _ in range(args.cases)]
 
     ptr = [0]
@@ -276,8 +321,7 @@ def main():
     split[perm[:a]]=0; split[perm[a:b]]=1; split[perm[b:]]=2
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(
-        args.out,
+    payload = dict(
         case_ptr=np.asarray(ptr, dtype=np.int64),
         edge_idx=np.concatenate(E).astype(np.int32),
         ratio=np.concatenate(R).astype(np.float32),
@@ -290,6 +334,20 @@ def main():
         seed=np.int64(args.seed),
         split_seed=np.int64(args.split_seed),
     )
+    if args.predecessor is not None:
+        rep=[0]; rnp=[0]; re=[]; rn=[]
+        for case in cases:
+            a=np.asarray(case["route_edges"],dtype=np.int32)
+            b=np.asarray(case["route_nodes"],dtype=np.int32)
+            re.append(a); rn.append(b)
+            rep.append(rep[-1]+len(a)); rnp.append(rnp[-1]+len(b))
+        payload.update(
+            route_edge_ptr=np.asarray(rep,dtype=np.int64),
+            route_edge_idx=np.concatenate(re).astype(np.int32),
+            route_node_ptr=np.asarray(rnp,dtype=np.int64),
+            route_node_idx=np.concatenate(rn).astype(np.int32),
+        )
+    np.savez_compressed(args.out, **payload)
 
     summary = {
         "dataset": args.dataset,
@@ -312,6 +370,7 @@ def main():
             "driver_ratio": 0.5,
             "precedence": "each pickup precedes its own dropoff",
             "primary_goal": "graph-scale reproduction with two passengers fixed",
+            "full_route_supervision": bool(args.predecessor is not None),
         },
     }
     args.summary.parent.mkdir(parents=True, exist_ok=True)
