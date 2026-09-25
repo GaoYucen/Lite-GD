@@ -101,6 +101,9 @@ def make_batches(ids, data: HistoricalExact, batch_size: int, *, seed: int, epoc
     # for the same passenger count. Keep every real candidate and bucket by
     # both semantic length and candidate count instead of padding fake points.
     def signature(cid):
+        if hasattr(data, "case_light"):
+            x = data.case_light(int(cid))
+            return (int(x["n_events"] // 2), int(len(x["flat"])))
         case = data.case_by_id[int(cid)]
         n_points = 1 + sum(len(g) for g in case.candidate_groups)
         return (int(case.passenger_count), int(n_points))
