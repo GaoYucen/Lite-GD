@@ -66,7 +66,8 @@ def main():
     ratios=[]
 
     per_passenger={2:{"cases":0},3:{"cases":0}}
-    retained_ids=[int(c.case_id) for c in data.cases if int(c.case_id) not in AMBIGUOUS_GROUP_CASES]\n    for cid in retained_ids:
+    retained_ids=[int(c.case_id) for c in data.cases if int(c.case_id) not in AMBIGUOUS_GROUP_CASES]
+    for cid in retained_ids:
         x=data.case_tensors(int(cid))
         flat=x["flat"]; pts=np.asarray(x["points"],dtype=np.float64)
         target=list(map(int,x["target"]))
