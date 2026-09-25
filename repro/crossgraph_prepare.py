@@ -46,6 +46,7 @@ def main():
     ap.add_argument("--raw-edges", required=True, type=Path)
     ap.add_argument("--graph-out", required=True, type=Path)
     ap.add_argument("--matrix-out", type=Path)
+    ap.add_argument("--predecessor-out", type=Path)
     args = ap.parse_args()
 
     z = np.load(args.protocol_npz, mmap_mode="r")
@@ -75,17 +76,28 @@ def main():
         "graph_out": str(args.graph_out),
     }
 
-    if args.matrix_out is not None:
-        args.matrix_out.parent.mkdir(parents=True, exist_ok=True)
-        D = dijkstra(A, directed=True)
+    if args.matrix_out is not None or args.predecessor_out is not None:
+        if args.predecessor_out is not None:
+            D, P = dijkstra(A, directed=True, return_predecessors=True)
+        else:
+            D = dijkstra(A, directed=True)
+            P = None
         if not np.isfinite(D).all():
             bad = int((~np.isfinite(D)).sum())
             raise RuntimeError(f"graph is not strongly connected: {bad} nonfinite APSP entries")
-        np.save(args.matrix_out, D)
-        summary["matrix_out"] = str(args.matrix_out)
-        summary["matrix_shape"] = list(D.shape)
-        summary["matrix_dtype"] = str(D.dtype)
-        summary["matrix_bytes"] = int(D.nbytes)
+        if args.matrix_out is not None:
+            args.matrix_out.parent.mkdir(parents=True, exist_ok=True)
+            np.save(args.matrix_out, D)
+            summary["matrix_out"] = str(args.matrix_out)
+            summary["matrix_shape"] = list(D.shape)
+            summary["matrix_dtype"] = str(D.dtype)
+            summary["matrix_bytes"] = int(D.nbytes)
+        if args.predecessor_out is not None:
+            args.predecessor_out.parent.mkdir(parents=True, exist_ok=True)
+            np.save(args.predecessor_out, P.astype(np.int32, copy=False))
+            summary["predecessor_out"] = str(args.predecessor_out)
+            summary["predecessor_shape"] = list(P.shape)
+            summary["predecessor_bytes"] = int(P.astype(np.int32, copy=False).nbytes)
 
     print("CROSSGRAPH_PREPARE", json.dumps(summary, sort_keys=True))
 
