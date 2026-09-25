@@ -93,7 +93,8 @@ def run(seed,args):
     init_t0=time.perf_counter()
     data=HistoricalExact(args.links,args.orders,args.labels,args.exact)
     offline_data_init_s=time.perf_counter()-init_t0
-    split_seed=args.split_seed if args.split_seed is not None else seed\n    tr,va,te=data.split(split_seed);dev=torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    split_seed=args.split_seed if args.split_seed is not None else seed
+    tr,va,te=data.split(split_seed);dev=torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train=loaders(data,tr,args.batch,shuffle=True,seed=seed)
     val=loaders(data,va,args.batch,shuffle=False,seed=seed)
     test=loaders(data,te,args.batch,shuffle=False,seed=seed)
