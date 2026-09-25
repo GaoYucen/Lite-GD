@@ -112,11 +112,24 @@ class CrossgraphCases:
         }
 
 
-def make_batches(ids, batch, seed, epoch, shuffle):
-    x = np.asarray(ids, dtype=np.int64)
-    if shuffle:
-        x = np.random.default_rng(seed + 1009*epoch).permutation(x)
-    return [x[i:i+batch].tolist() for i in range(0, len(x), batch)]
+def make_batches(ids, data, batch, seed, epoch, shuffle):
+    # Group by the true flattened candidate count.  This keeps both the LSTM
+    # encoder and AM self-attention free of synthetic padding tokens.
+    rng = np.random.default_rng(seed + 1009*epoch)
+    buckets = {}
+    for cid in ids:
+        n = int(data.ptr[int(cid)+1] - data.ptr[int(cid)])
+        buckets.setdefault(n, []).append(int(cid))
+    out = []
+    for n in sorted(buckets):
+        x = np.asarray(buckets[n], dtype=np.int64)
+        if shuffle:
+            x = rng.permutation(x)
+        for i in range(0, len(x), batch):
+            out.append(x[i:i+batch].tolist())
+    if shuffle and len(out) > 1:
+        rng.shuffle(out)
+    return out
 
 
 def model_forward(model, b, teacher=None, sample=False, generator=None):
@@ -131,7 +144,7 @@ def evaluate(model, data, ids, device, batch=64):
     model.eval()
     rows = []
     with torch.no_grad():
-        for q in make_batches(ids, batch, 0, 0, False):
+        for q in make_batches(ids, data, batch, 0, 0, False):
             b = data.collate(q, device)
             seq, _, _ = model_forward(model, b)
             pred_cost = route_cost(b["cost"], seq)
@@ -188,7 +201,7 @@ def train_ptr(args, data, tr, va, device):
     best = float("inf"); state = None; bad = 0; hist = []
     for ep in range(1, args.epochs+1):
         model.train(); vals = []
-        for ids in make_batches(tr, args.batch, args.seed, ep, True):
+        for ids in make_batches(tr, data, args.batch, args.seed, ep, True):
             b = data.collate(ids, device)
             _, _, loss = model_forward(model, b, teacher=b["target"])
             opt.zero_grad(set_to_none=True); loss.backward()
@@ -217,7 +230,7 @@ def train_am(args, data, tr, va, device):
     best = float("inf"); state = None; bad = 0; hist = []
     for ep in range(1, args.epochs+1):
         model.train(); vals=[]; costs=[]
-        for ids in make_batches(tr, args.batch, args.seed, ep, True):
+        for ids in make_batches(tr, data, args.batch, args.seed, ep, True):
             b = data.collate(ids, device)
             seq, ll, _ = model_forward(model, b, sample=True, generator=gen)
             c = route_cost(b["cost"], seq)
