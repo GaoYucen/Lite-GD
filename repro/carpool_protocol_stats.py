@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from historical_full_model import HistoricalExact
+from historical_full_model import HistoricalExact, AMBIGUOUS_GROUP_CASES
 
 
 EARTH_M = 6371000.0
@@ -66,7 +66,7 @@ def main():
     ratios=[]
 
     per_passenger={2:{"cases":0},3:{"cases":0}}
-    for cid in data.ids:
+    retained_ids=[int(c.case_id) for c in data.cases if int(c.case_id) not in AMBIGUOUS_GROUP_CASES]\n    for cid in retained_ids:
         x=data.case_tensors(int(cid))
         flat=x["flat"]; pts=np.asarray(x["points"],dtype=np.float64)
         target=list(map(int,x["target"]))
@@ -113,7 +113,7 @@ def main():
 
     out={
         "dataset":"historical Chengdu recovered edge+ratio exact-label benchmark",
-        "cases":int(len(data.ids)),
+        "cases":int(len(retained_ids)),
         "passenger_counts":per_passenger,
         "candidate_count_per_event":summarize(group_counts),
         "candidate_pairwise_haversine_m":summarize(within_pair),
