@@ -282,7 +282,7 @@ def generate_one(s: Sampler):
             PICKUP_COUNT_WEIGHTS if pickup else DROPOFF_COUNT_WEIGHTS,
         )
         radius = sample_piecewise(s.rng, GROUP_RADIUS_Q, GROUP_RADIUS_M)
-        edges = s.candidate_edges(anchors[e], pickup, count, radius, excluded=set())
+        edges = s.candidate_edges(anchors[e], pickup, count, radius, exclude=excluded)
         ratio = 0.001 if pickup else 0.999
         ids = []
         pts = []
