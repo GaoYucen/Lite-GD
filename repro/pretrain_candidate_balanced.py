@@ -7,6 +7,7 @@ import torch
 from torch import nn
 
 from historical_full_model import HistoricalExact, Model, loaders, move, seed_all
+from crossgraph_data import CrossGraphExact
 from pretrain_diagnostics import pretrain_metrics
 from evaluation import summarize_route_rows, benchmark_inference
 
@@ -91,7 +92,13 @@ def eval_decomposed(model,loader,data,dev):
 def run(seed,args):
     seed_all(seed)
     init_t0=time.perf_counter()
-    data=HistoricalExact(args.links,args.orders,args.labels,args.exact)
+    if args.benchmark_dir is not None:
+        if args.apsp is None: raise ValueError("--apsp is required with --benchmark-dir")
+        data=CrossGraphExact(args.benchmark_dir,args.apsp,require_routes=True)
+    else:
+        if any(x is None for x in (args.links,args.orders,args.labels,args.exact)):
+            raise ValueError("historical mode requires --links --orders --labels --exact")
+        data=HistoricalExact(args.links,args.orders,args.labels,args.exact)
     offline_data_init_s=time.perf_counter()-init_t0
     split_seed=args.split_seed if args.split_seed is not None else seed
     tr,va,te=data.split(split_seed);dev=torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -197,8 +204,9 @@ def run(seed,args):
 
 def main():
     ap=argparse.ArgumentParser()
-    ap.add_argument("--links",required=True,type=Path);ap.add_argument("--orders",required=True,type=Path)
-    ap.add_argument("--labels",required=True,type=Path);ap.add_argument("--exact",required=True,type=Path)
+    ap.add_argument("--links",type=Path);ap.add_argument("--orders",type=Path)
+    ap.add_argument("--labels",type=Path);ap.add_argument("--exact",type=Path)
+    ap.add_argument("--benchmark-dir",type=Path);ap.add_argument("--apsp",type=Path)
     ap.add_argument("--seed",type=int,required=True);ap.add_argument("--split-seed",type=int,default=None);ap.add_argument("--out",required=True,type=Path)
     ap.add_argument("--candidate-pos-weight",type=float,default=3.0)
     ap.add_argument("--candidate-lambda",type=float,default=1.0)
