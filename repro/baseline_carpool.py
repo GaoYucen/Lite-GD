@@ -281,7 +281,7 @@ class CarpoolAM(nn.Module):
             compat = compat.masked_fill(bad[:, None, :], -1e9)
             attn = torch.softmax(compat, dim=-1)
             glimpse = torch.matmul(attn.unsqueeze(2), v).squeeze(2)
-            glimpse = self.project_out(glimpse.transpose(1, 2).reshape(q.size(0), self.dim))
+            glimpse = self.project_out(glimpse.reshape(q.size(0), self.dim))
             logits = torch.einsum("bd,bnd->bn", glimpse, logit_k) / scale_d
             logits = torch.tanh(logits) * self.tanh_clipping
             logits = logits.masked_fill(bad, -1e9)
