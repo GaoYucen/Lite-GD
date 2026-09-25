@@ -424,16 +424,32 @@ def _candidate_road_cost(data,x):
     cid=int(x["cid"])
     if cid in cache:return cache[cid]
     flat=x["flat"];n=len(flat)
-    cost=np.zeros((n,n),dtype=np.float32)
-    finite_vals=[]
-    for i,(ea,ra,_,_) in enumerate(flat):
-        for j,(eb,rb,_,_) in enumerate(flat):
-            if i==j:continue
-            z=float(data.point_dist(ea,ra,eb,rb))
-            cost[i,j]=z
-            if np.isfinite(z) and z>0:finite_vals.append(z)
+
+    # CrossGraphExact exposes array-backed graph fields, so build the complete
+    # directed candidate metric in vectorized form.  This avoids O(N^2) Python
+    # point_dist calls on the 10k-case benchmarks and keeps GPU feeding cheap.
+    if all(hasattr(data,k) for k in ("weight","D","src","dst")):
+        e=np.asarray([z[0] for z in flat],dtype=np.int64)
+        r=np.asarray([z[1] for z in flat],dtype=np.float64)
+        w=np.asarray(data.weight[e],dtype=np.float64)
+        src=np.asarray(data.src[e],dtype=np.int64)
+        dst=np.asarray(data.dst[e],dtype=np.int64)
+        cost=(1.0-r[:,None])*w[:,None]+np.asarray(data.D[np.ix_(dst,src)],dtype=np.float64)+r[None,:]*w[None,:]
+        same=e[:,None]==e[None,:]
+        forward=r[None,:]>=r[:,None]
+        direct=(r[None,:]-r[:,None])*w[:,None]
+        cost=np.where(same&forward,np.minimum(cost,direct),cost)
+        np.fill_diagonal(cost,0.0)
+        cost=cost.astype(np.float32,copy=False)
+    else:
+        cost=np.zeros((n,n),dtype=np.float32)
+        for i,(ea,ra,_,_) in enumerate(flat):
+            for j,(eb,rb,_,_) in enumerate(flat):
+                if i!=j:cost[i,j]=float(data.point_dist(ea,ra,eb,rb))
+
+    finite=cost[np.isfinite(cost)&(cost>0)]
     if not np.isfinite(cost).all():
-        fallback=(max(finite_vals) if finite_vals else 1.0)*4.0
+        fallback=(float(finite.max()) if finite.size else 1.0)*4.0
         cost[~np.isfinite(cost)]=fallback
     cache[cid]=cost
     return cost
