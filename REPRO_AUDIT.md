@@ -259,3 +259,80 @@ Detailed numbers are maintained in [REPRO_RESULTS_20260925.md](REPRO_RESULTS_202
 After replacing the archived pickup-first targets with exact paper-precedence labels, the current three-seed online core reaches **4.68% mean route gap** with GCN + distance/angle feature crossover + gating. This is a real held-out improvement over the strict archived PointerNet (5.55%) and nearest-feasible greedy (6.04%), but the exact-sequence accuracy remains low (~5.33%) and the retained 1,000-case benchmark is not the paper's 10,000-case Chengdu benchmark.
 
 The next scientific gate is therefore the paper's node/edge supervised pre-training on recovered edge+ratio cases, not additional tuning of the simplified PointerNet.
+
+
+## 10. Current fixed-split and cross-graph protocol
+
+The current reproduction stage intentionally separates **model comparison** from
+**graph-scale validation**.
+
+### 10.1 Fixed-split learning comparison
+
+The historical edge+ratio benchmark now uses one frozen split:
+
+- retained cases: 996;
+- split seed: `20260925`;
+- training seeds: `1234, 4321, 2468`;
+- primary metrics:
+  - Mean-case Gap;
+  - Event-step Accuracy.
+
+The same train/validation/test case IDs are used for PointerNet, AM-style and
+Lite-GD.  Detailed numbers are in `REPRO_RESULTS_20260925.md`.
+
+### 10.2 Cross-graph benchmark policy
+
+The first graph-scale experiment fixes the routing-task complexity at **two
+passengers** so road-network scale is the principal changed variable.
+
+Recovered Chengdu task statistics used to calibrate generation:
+
+- candidate count per semantic event:
+  - range 4--10;
+  - mean 7.56;
+  - median 8;
+- candidate-group radius (projected/geodesic metres):
+  - median about 490 m;
+  - p90 about 1.17 km;
+  - p95 about 1.71 km;
+- driver -> exact pickup directed-road distance:
+  - median about 8.96 km;
+- exact pickup -> own dropoff directed-road distance:
+  - median about 9.93 km;
+- historical candidate edge-ratio semantics:
+  - pickups near 0.001;
+  - dropoffs near 0.999.
+
+Generated cases use:
+
+1. one driver point on a directed road edge;
+2. two passenger pickup/dropoff event pairs;
+3. variable-size candidate groups calibrated to the recovered Chengdu count and
+   spatial-scale distributions;
+4. pickup ratio 0.001 and dropoff ratio 0.999;
+5. each pickup constrained to precede its own dropoff;
+6. exact directed point-on-edge distance;
+7. exact dynamic-programming search over all legal event orders and candidate
+   choices;
+8. deterministic 8:1:1 split with split seed `20260925`.
+
+Synthetic event centres are first **snapped to valid road support** before local
+candidate sets are drawn.  This avoids inflating candidate-group radius when a
+Euclidean target falls inside a road-sparse block.
+
+### 10.3 Reused audited road assets
+
+No new OSM download is required.
+
+| Graph | Nodes | Directed arcs | Exact-distance asset |
+|---|---:|---:|---|
+| Chengdu | 1,901 | 5,941 | existing APSP |
+| Jinan | 8,840 | 23,206 | Lite-GD cross-graph APSP, generated once from audited native graph |
+| Shenzhen | 11,738 | 27,105 | existing audited APSP |
+| DIMACS-FLA | 1,070,376 | 2,687,902 | existing RoutingKit CH exact oracle |
+
+Jinan/Shenzhen first undergo a 1,000-case distribution-certification pilot.
+Only after the candidate/OD distributions are accepted is the identical
+generator frozen for the 10,000-case benchmark.  FLA remains a later stage
+because the full Lite-GD reproduction requires recovering the paper filter /
+route-supervision path without constructing an impossible million-node APSP.
