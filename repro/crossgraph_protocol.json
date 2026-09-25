@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "name": "Lite-GD cross-graph reproduction protocol",
+  "source": "recovered historical Chengdu edge+ratio benchmark, 996 retained cases",
+  "source_stats_commit": "01a599a95c1907dfc0d1b40f31ad7f0348224cef",
+  "design": {
+    "passengers": 2,
+    "split": [
+      0.8,
+      0.1,
+      0.1
+    ],
+    "split_seed": 20260925,
+    "graph_scale_is_primary_changed_variable": true,
+    "notes": [
+      "Candidate count and spatial scale are sampled from recovered Chengdu empirical statistics.",
+      "Driver/pickup/dropoff are points on directed edges represented by (edge_index, ratio).",
+      "Exact labels use pickup-before-own-dropoff precedence and one candidate per event.",
+      "The first cross-graph stage fixes passenger count to 2 to isolate graph-scale effects."
+    ]
+  },
+  "candidate_count_histograms": {
+    "pickup": {
+      "4": 12,
+      "5": 61,
+      "6": 210,
+      "7": 604,
+      "8": 816,
+      "9": 334,
+      "10": 5
+    },
+    "dropoff": {
+      "4": 6,
+      "5": 52,
+      "6": 215,
+      "7": 622,
+      "8": 805,
+      "9": 334,
+      "10": 8
+    }
+  },
+  "ratio_policy": {
+    "driver": {
+      "0.001": 996
+    },
+    "pickup_candidate": {
+      "0.001": 15425
+    },
+    "dropoff_candidate": {
+      "0.001": 388,
+      "0.999": 15066
+    }
+  },
+  "empirical_quantiles_m": {
+    "candidate_group_radius": {
+      "q": [
+        0,
+        0.1,
+        0.25,
+        0.5,
+        0.75,
+        0.9,
+        0.95,
+        1
+      ],
+      "v": [
+        69.5274471967395,
+        273.4844473275673,
+        363.77908771142233,
+        489.83045044965695,
+        705.3136049787797,
+        1165.3971789299417,
+        1711.8907134083697,
+        6558.969899001407
+      ]
+    },
+    "driver_to_pickup_haversine": {
+      "q": [
+        0,
+        0.1,
+        0.25,
+        0.5,
+        0.75,
+        0.9,
+        0.95,
+        1
+      ],
+      "v": [
+        0,
+        2789.5155315690236,
+        4659.260689989655,
+        7280.602573530552,
+        10416.409246490495,
+        13693.316666344826,
+        15454.944033816122,
+        26243.67536362974
+      ]
+    },
+    "pickup_to_dropoff_haversine": {
+      "q": [
+        0,
+        0.1,
+        0.25,
+        0.5,
+        0.75,
+        0.9,
+        0.95,
+        1
+      ],
+      "v": [
+        274.73736176285996,
+        3848.3052125156855,
+        5683.097324132784,
+        8207.717335146343,
+        10845.963782741135,
+        13467.392445967787,
+        15106.558558838176,
+        27142.97241140127
+      ]
+    }
+  },
+  "historical_reference": {
+    "candidate_group_radius_median_m": 489.83045044965695,
+    "driver_to_pickup_haversine_median_m": 7280.602573530552,
+    "pickup_to_dropoff_haversine_median_m": 8207.717335146343,
+    "exact_route_directed_road_median_m": 31180.880298354252
+  }
+}
