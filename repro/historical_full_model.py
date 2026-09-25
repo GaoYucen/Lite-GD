@@ -377,6 +377,97 @@ class RoadMetricDecoder(PaperDecoder):
             current=choose
         return sum(loss)/max(1,len(loss)),torch.stack(preds,1)
 
+
+class HierarchicalRoadMetricDecoder(RoadMetricDecoder):
+    """Factor route decoding into event ordering then within-event candidate choice."""
+    def __init__(self,h,max_points,layers=2,heads=4):
+        super().__init__(h,max_points,layers=layers,heads=heads)
+        self.event_emb=nn.Embedding(6,h)
+        self.event_rep=nn.Linear(h,h,bias=False)
+        self.event_state=nn.Linear(h,h,bias=False)
+        self.event_metric=nn.Sequential(nn.Linear(3,h),nn.SiLU(),nn.Linear(h,h))
+        self.event_v=nn.Linear(h,1,bias=False)
+
+    def _represent(self,edge_h,edge_idx,coords,valid,road_cost):
+        B,N=edge_idx.shape;H=edge_h.size(-1)
+        cand=torch.gather(edge_h,1,edge_idx.unsqueeze(-1).expand(-1,-1,H))
+        fc=self.domain(coords,valid)
+        gfc=torch.sigmoid(self.gfc1(fc)+self.gfc2(cand))
+        ge=torch.sigmoid(self.ge1(fc)+self.ge2(cand))
+        rep=torch.tanh(self.merge(torch.cat([gfc*fc,ge*cand],-1)))
+        pair_feat,_=self.road_features(road_cost,valid)
+        for layer in self.rel:
+            rep=layer(rep,pair_feat,valid)
+        return rep,pair_feat
+
+    def forward(self,edge_h,edge_idx,event,coords,valid,target,n_events,road_cost,teacher=True):
+        rep,pair_feat=self._represent(edge_h,edge_idx,coords,valid,road_cost)
+        B,N,H=rep.shape
+        denom=valid.sum(1,keepdim=True).clamp_min(1).to(rep.dtype)
+        graph=(rep*valid.unsqueeze(-1)).sum(1)/denom
+        state=torch.tanh(self.init_state(torch.cat([rep[:,0],graph],dim=-1)))
+        current=torch.zeros(B,dtype=torch.long,device=rep.device)
+        done=torch.zeros(B,6,dtype=torch.bool,device=rep.device)
+        losses=[];preds=[];ar=torch.arange(B,device=rep.device)
+
+        for step in range(target.size(1)):
+            step_pair=pair_feat[ar,current]  # B,N,3
+            event_scores=[]
+            present=[]
+            for e in range(6):
+                em=(event==e)&valid
+                present.append(em.any(dim=1))
+                cnt=em.sum(1,keepdim=True).clamp_min(1).to(rep.dtype)
+                pooled=(rep*em.unsqueeze(-1)).sum(1)/cnt
+                fwd=step_pair[...,0];rev=step_pair[...,1]
+                inf=torch.full_like(fwd,1e9)
+                min_f=torch.where(em,fwd,inf).min(1).values
+                min_r=torch.where(em,rev,inf).min(1).values
+                mean_f=(fwd*em).sum(1)/cnt.squeeze(1)
+                has=em.any(1)
+                min_f=torch.where(has,min_f,torch.zeros_like(min_f))
+                min_r=torch.where(has,min_r,torch.zeros_like(min_r))
+                stat=torch.stack([min_f,mean_f,min_r],dim=-1)
+                z=self.event_rep(pooled)+self.event_state(state)+self.event_metric(stat)+self.event_emb.weight[e]
+                event_scores.append(self.event_v(torch.tanh(z)).squeeze(-1))
+            event_score=torch.stack(event_scores,dim=1)
+            bad_event=~torch.stack(present,dim=1)
+            for e in range(6):
+                bad_event[:,e]|=done[:,e]
+                if e%2==1:bad_event[:,e]|=~done[:,e-1]
+            event_score=event_score.masked_fill(bad_event,-1e9)
+            pred_event=event_score.argmax(1)
+
+            active=target[:,step]!=-100
+            safe_target=torch.where(active,target[:,step],torch.zeros_like(target[:,step]))
+            target_event=event.gather(1,safe_target[:,None]).squeeze(1).clamp_min(0)
+            if active.any():
+                event_loss=nn.functional.cross_entropy(event_score[active],target_event[active])
+            else:
+                event_loss=event_score.sum()*0.0
+            chosen_event=torch.where(active & teacher,target_event,pred_event)
+
+            metric=self.step_metric(step_pair)
+            cand_score=self.metric_v(torch.tanh(
+                self.metric_cand(rep)+self.metric_state(state)[:,None,:]+metric
+            )).squeeze(-1)
+            cand_bad=(~valid)|(event!=chosen_event[:,None])
+            cand_score=cand_score.masked_fill(cand_bad,-1e9)
+            pred=cand_score.argmax(1);preds.append(pred)
+            if active.any():
+                cand_loss=nn.functional.cross_entropy(cand_score[active],target[active,step])
+                losses.append(event_loss+cand_loss)
+
+            choose=torch.where(active & teacher,target[:,step],pred)
+            if active.any():
+                rows=ar[active]
+                done[rows,chosen_event[active]]=True
+            state=self.gru(rep[ar,choose],state)
+            current=choose
+
+        return sum(losses)/max(1,len(losses)),torch.stack(preds,1)
+
+
 class Model(nn.Module):
     def __init__(self,data,h=64,decoder_arch="legacy",metric_layers=2,metric_heads=4):
         super().__init__()
@@ -387,6 +478,8 @@ class Model(nn.Module):
             self.decoder=PaperDecoder(h,data.max_points)
         elif decoder_arch=="road_metric":
             self.decoder=RoadMetricDecoder(h,data.max_points,layers=metric_layers,heads=metric_heads)
+        elif decoder_arch=="road_metric_hier":
+            self.decoder=HierarchicalRoadMetricDecoder(h,data.max_points,layers=metric_layers,heads=metric_heads)
         else:
             raise ValueError(f"unknown decoder_arch={decoder_arch}")
     def encode(self,b):return self.encoder(b["role"],b["ratio"])

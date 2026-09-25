@@ -100,7 +100,7 @@ def main():
 
     # Candidate-aware Lite-GD fixed Phase-A protocol.
     ap.add_argument("--hidden",type=int,default=64)
-    ap.add_argument("--litegd-arch",choices=["legacy","road_metric"],default="legacy")
+    ap.add_argument("--litegd-arch",choices=["legacy","road_metric","road_metric_hier"],default="legacy")
     ap.add_argument("--metric-layers",type=int,default=2)
     ap.add_argument("--metric-heads",type=int,default=4)
     ap.add_argument("--litegd-batch",type=int,default=8)
