@@ -231,3 +231,38 @@ The pre-training pilot compares the same joint GCN + distance/angle crossover + 
 - initialized by exact-route node binary classification + edge four-class classification.
 
 The pilot is retained only if held-out route quality improves, after which it will be repeated over multiple seeds.
+
+
+## 11. Final historical edge+ratio pre-training result (3 seeds)
+
+The final experiment uses commit `2dccc4d8f7634c69b7063a707f1afad412b219e3`, excludes the four historical cases whose passenger/group semantics cannot be uniquely reconstructed (`51, 244, 620, 873`), and evaluates **996 cases** with deterministic 8:1:1 splits.
+
+The same joint node/edge GCN + domain crossover + gating + precedence decoder is trained:
+
+- from scratch; and
+- after exact-route node binary + edge four-class pre-training.
+
+| Seed | Scratch Gap | Pretrained Gap | Gap change | Scratch Exact | Pretrained Exact | Scratch Pointer | Pretrained Pointer |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 20260925 | 6.70% | 6.60% | **-0.10pt** | 3.0% | 2.0% | 32.93% | 30.98% |
+| 20260926 | 5.69% | 5.78% | +0.08pt | 1.0% | 3.0% | 36.34% | 40.49% |
+| 20260927 | 6.81% | 5.60% | **-1.21pt** | 2.0% | 1.0% | 30.49% | 30.98% |
+| **Mean** | **6.40%** | **5.99%** | **-0.41pt** | **2.0%** | **2.0%** | **33.25%** | **34.15%** |
+
+Across seeds:
+
+- scratch gap mean/std: **6.40% / 0.50%**;
+- pretrained gap mean/std: **5.99% / 0.43%**;
+- mean absolute gap reduction: **0.41 percentage points**;
+- mean relative gap reduction: **6.38%**;
+- mean-case gap: **6.14% -> 5.72%**;
+- illegal-route rate: **0% for every run**.
+
+Interpretation:
+
+1. **The pre-training signal is real but modest.** Route quality improves on average and in two of three seeds.
+2. **The gain is not yet robust enough to promote pre-training as a reproduced paper component.** One seed regresses slightly.
+3. **Exact sequence discrimination remains the main failure mode.** Mean exact accuracy stays at 2%, while pointer accuracy improves by <1 point.
+4. **Pre-training appears to shape the representation toward lower-cost near-optimal routes rather than toward exact candidate recovery.** This is useful, but it is not sufficient to explain the TMC exact-sequence result.
+
+The next experiment therefore measures node/edge pre-training validation quality directly and tests whether pre-trained representations are being overwritten during decoder fine-tuning (lower encoder LR / staged unfreezing) before introducing the paper filters.
