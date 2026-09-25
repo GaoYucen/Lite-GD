@@ -50,7 +50,7 @@ class CrossGraphExact:
         em=eb.mean(0);es=eb.std(0)+1e-8
         self.edge_base=((eb-em)/es).astype(np.float32)
         self.max_points=max(1+sum(len(g) for g in c["candidate_groups"]) for c in self.cases)
-        self._cache={}
+        self._light_cache={}
 
     def split(self,seed=None):
         s=self.metadata["split"]
@@ -67,26 +67,43 @@ class CrossGraphExact:
             z=min(z,(rb-ra)*float(self.weight[a]))
         return float(z)
 
-    def case_tensors(self,cid):
+    def case_light(self,cid):
+        """Return only candidate-level tensors and cache them safely.
+
+        This avoids caching O(|E|) dense role/label arrays for every case on
+        10k-instance cross-graph benchmarks.
+        """
         cid=int(cid)
-        if cid in self._cache:return self._cache[cid]
+        if cid in self._light_cache:return self._light_cache[cid]
         c=self.raw_by_id[cid]
         n_events=len(c["candidate_groups"])
-        role=np.zeros((self.n_edges,7),np.float32)
-        rval=np.zeros((self.n_edges,7),np.float32)
         de=int(c["driver"]["edge"]);dr=float(c["driver"]["ratio"])
-        role[de,0]=1;rval[de,0]=dr
         flat=[(de,dr,-1,-1)]
         for et,g in enumerate(c["candidate_groups"]):
             for li,z in enumerate(g):
-                e=int(z["edge"]);r=float(z["ratio"]);ch=et+1
-                role[e,ch]=1;rval[e,ch]=r
-                flat.append((e,r,int(et),int(li)))
-
+                flat.append((int(z["edge"]),float(z["ratio"]),int(et),int(li)))
         target=np.asarray(c["exact_flat_indices"],dtype=np.int64)
         pts=np.stack([self.point_coord(e,r) for e,r,_,_ in flat])
+        out=dict(cid=cid,flat=flat,points=pts,target=target,
+                 opt=float(c["exact_length"]),n_events=n_events)
+        self._light_cache[cid]=out
+        return out
 
-        # Pre-training targets require certified full routes.
+    def case_tensors(self,cid):
+        cid=int(cid)
+        c=self.raw_by_id[cid]
+        light=self.case_light(cid)
+        flat=light["flat"];n_events=light["n_events"]
+
+        # Dense graph-sized arrays are intentionally ephemeral.  Caching these
+        # across 10k cases would consume tens of GB on medium directed graphs.
+        role=np.zeros((self.n_edges,7),np.float32)
+        rval=np.zeros((self.n_edges,7),np.float32)
+        de,dr,_,_=flat[0]
+        role[de,0]=1;rval[de,0]=dr
+        for e,r,et,_ in flat[1:]:
+            ch=int(et)+1;role[int(e),ch]=1;rval[int(e),ch]=float(r)
+
         edge_y=np.ones(self.n_edges,np.int64)
         node_y=np.zeros(self.n_nodes,np.int64)
         if "exact_edge_route" in c and "exact_node_route" in c:
@@ -98,10 +115,8 @@ class CrossGraphExact:
             for v in c["exact_node_route"]:
                 if 0<=int(v)<self.n_nodes:node_y[int(v)]=1
 
-        out=dict(
+        return dict(
             cid=cid,role=role,ratio=rval,node_y=node_y,edge_y=edge_y,
-            flat=flat,points=pts,target=target,opt=float(c["exact_length"]),
-            n_events=n_events
+            flat=flat,points=light["points"],target=light["target"],
+            opt=light["opt"],n_events=n_events
         )
-        self._cache[cid]=out
-        return out
