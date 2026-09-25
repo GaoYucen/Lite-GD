@@ -71,13 +71,19 @@ def main():
     driver_pick_geo=[]; driver_pick_road=[]
     pickup_drop_geo=[]; pickup_drop_road=[]
     route_lengths=[]
-    ratios=[]; pickup_ratios=[]; dropoff_ratios=[]; driver_ratios=[]
+    ratios=[]
+    driver_ratios=[]
+    pickup_ratios=[]
+    dropoff_ratios=[]; pickup_ratios=[]; dropoff_ratios=[]; driver_ratios=[]
 
     per_passenger={2:{"cases":0},3:{"cases":0}}
     retained_ids=[int(c.case_id) for c in data.cases if int(c.case_id) not in AMBIGUOUS_GROUP_CASES]
     for cid in retained_ids:
         x=data.case_tensors(int(cid))
         flat=x["flat"]; pts=np.asarray(x["points"],dtype=np.float64)
+        driver_ratios.append(float(flat[0][1]))
+        for _,r,e,_ in flat[1:]:
+            (pickup_ratios if int(e)%2==0 else dropoff_ratios).append(float(r))
         target=list(map(int,x["target"]))
         n_events=int(x["n_events"])
         q=n_events//2
@@ -141,6 +147,9 @@ def main():
         "exact_pickup_to_own_dropoff_directed_road_m":summarize(pickup_drop_road),
         "exact_route_directed_road_m":summarize(route_lengths),
         "candidate_ratio":summarize(ratios),
+        "driver_ratio":summarize(driver_ratios),
+        "pickup_candidate_ratio":summarize(pickup_ratios),
+        "dropoff_candidate_ratio":summarize(dropoff_ratios),
         "candidate_ratio_histogram":value_counts(ratios),
         "pickup_candidate_ratio":summarize(pickup_ratios),
         "pickup_candidate_ratio_histogram":value_counts(pickup_ratios),
