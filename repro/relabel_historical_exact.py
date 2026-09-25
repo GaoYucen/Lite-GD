@@ -137,7 +137,10 @@ def main():
         out.append(exact_case(c,edges,D,P,pair_edge))
         if (i+1)%100==0: print("processed",i+1)
 
-    gaps=np.asarray([(x["legacy_length"]/x["exact_length"]-1)*100 for x in out])
+    # The historical stored route_length uses a different legacy metric.
+    # Do not compare it numerically with the regenerated point-on-edge exact
+    # length here. Legacy selected routes are audited under one unified metric
+    # by repro/audit_historical_exact.py.
     changed=np.asarray([x["legacy_selected_edges"]!=x["exact_selected_edges"] for x in out])
     inter=np.asarray([
       any(seq.index(2*p+1)<max(seq.index(2*q) for q in range(x["passenger_count"]))
@@ -148,11 +151,8 @@ def main():
       "cases":len(out),
       "two_passenger":sum(x["passenger_count"]==2 for x in out),
       "three_passenger":sum(x["passenger_count"]==3 for x in out),
-      "legacy_vs_exact_gap_mean_pct":float(gaps.mean()),
-      "legacy_vs_exact_gap_median_pct":float(np.median(gaps)),
-      "legacy_vs_exact_gap_p95_pct":float(np.percentile(gaps,95)),
-      "legacy_vs_exact_gap_max_pct":float(gaps.max()),
-      "legacy_equal_exact_count":int(np.sum(np.abs(gaps)<=1e-8)),
+      "legacy_stored_length_comparable":False,
+      "legacy_metric_note":"Use audit_historical_exact.py for same-metric legacy-vs-exact comparison.",
       "changed_selected_sequence_cases":int(changed.sum()),
       "exact_interleaved_cases":int(inter.sum()),
       "exact_length_mean":float(np.mean([x["exact_length"] for x in out])),
