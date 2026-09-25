@@ -43,8 +43,9 @@ class CarpoolCases:
         self.data = data
         self.cache = {}
         pts = []
+        get_case = data.case_light if hasattr(data, "case_light") else data.case_tensors
         for cid in train_ids:
-            pts.append(data.case_tensors(cid)["points"])
+            pts.append(get_case(cid)["points"])
         cat = np.concatenate(pts, axis=0).astype(np.float64)
         self.coord_mean = cat.mean(axis=0).astype(np.float32)
         self.coord_std = np.maximum(cat.std(axis=0), 1e-6).astype(np.float32)
@@ -53,7 +54,8 @@ class CarpoolCases:
         cid = int(cid)
         if cid in self.cache:
             return self.cache[cid]
-        x = self.data.case_tensors(cid)
+        get_case = self.data.case_light if hasattr(self.data, "case_light") else self.data.case_tensors
+        x = get_case(cid)
         flat = x["flat"]
         n = len(flat)
         cost = np.zeros((n, n), dtype=np.float64)
