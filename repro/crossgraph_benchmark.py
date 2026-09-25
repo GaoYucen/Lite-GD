@@ -92,10 +92,16 @@ class RoadGraph:
         return self.coords[self.src]*(1-ratios[:,None])+self.coords[self.dst]*ratios[:,None]
 
 
-def load_native(protocol_npz:Path, raw_edges:Path) -> RoadGraph:
+def load_native(protocol_npz:Path, raw_nodes:Path, raw_edges:Path) -> RoadGraph:
     z=np.load(protocol_npz,mmap_mode="r")
-    coords=np.asarray(z["coordinates"],dtype=np.float64)
     original=np.asarray(z["original_node_ids"],dtype=np.int64)
+    # distance protocol stores projected, graph-centered coordinates.  Lite-GD
+    # domain features and the cross-graph spatial protocol require true lon/lat.
+    node_rows={}
+    with raw_nodes.open(newline="") as f:
+        for row in csv.DictReader(f):
+            node_rows[int(row["NodeID"])]=(float(row["Longitude"]),float(row["Latitude"]))
+    coords=np.asarray([node_rows[int(i)] for i in original],dtype=np.float64)
     maxid=int(original.max())
     mapping=np.full(maxid+1,-1,dtype=np.int64)
     mapping[original]=np.arange(len(original),dtype=np.int64)
@@ -331,6 +337,7 @@ def main():
     ap.add_argument("--dataset",choices=["native","fla"],required=True)
     ap.add_argument("--name",required=True)
     ap.add_argument("--protocol-npz",type=Path)
+    ap.add_argument("--raw-nodes",type=Path)
     ap.add_argument("--raw-edges",type=Path)
     ap.add_argument("--graph-npz",type=Path)
     ap.add_argument("--apsp",type=Path)
@@ -346,8 +353,9 @@ def main():
     args=ap.parse_args()
 
     if args.dataset=="native":
-        if args.protocol_npz is None or args.raw_edges is None: raise ValueError("native requires protocol npz + raw edges")
-        g=load_native(args.protocol_npz,args.raw_edges)
+        if args.protocol_npz is None or args.raw_nodes is None or args.raw_edges is None:
+            raise ValueError("native requires protocol npz + raw nodes + raw edges")
+        g=load_native(args.protocol_npz,args.raw_nodes,args.raw_edges)
     else:
         if args.graph_npz is None: raise ValueError("fla requires graph npz")
         g=load_fla(args.graph_npz)
