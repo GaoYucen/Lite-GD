@@ -141,7 +141,7 @@ def sample_group(rng, tree, point_xy, center, k, radius):
     # falls inside a road-sparse block.
     _, anchor = tree.query(center, k=1)
     center = point_xy[int(anchor)]
-    R = max(float(radius), 100.0)
+    R = max(0.85 * float(radius), 220.0)  # calibrated once on Jinan pilot; frozen for confirmations
     ids = tree.query_ball_point(center, r=R)
     while len(ids) < k and R < 8000:
         R *= 1.4
