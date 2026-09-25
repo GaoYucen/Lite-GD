@@ -93,8 +93,21 @@ class CarpoolCases:
 def make_batches(ids, data: HistoricalExact, batch_size: int, *, seed: int, epoch: int, shuffle: bool):
     rng = np.random.default_rng(seed + 1009 * epoch)
     batches = []
-    for p in sorted({data.case_by_id[int(i)].passenger_count for i in ids}):
-        z = np.asarray([int(i) for i in ids if data.case_by_id[int(i)].passenger_count == p], dtype=np.int64)
+
+    # Historical cases can have a variable number of retained candidates even
+    # for the same passenger count. Keep every real candidate and bucket by
+    # both semantic length and candidate count instead of padding fake points.
+    def signature(cid):
+        case = data.case_by_id[int(cid)]
+        n_points = 1 + sum(len(g) for g in case.candidate_groups)
+        return (int(case.passenger_count), int(n_points))
+
+    groups = {}
+    for cid in ids:
+        groups.setdefault(signature(cid), []).append(int(cid))
+
+    for sig in sorted(groups):
+        z = np.asarray(groups[sig], dtype=np.int64)
         if shuffle:
             z = rng.permutation(z)
         for s in range(0, len(z), batch_size):
