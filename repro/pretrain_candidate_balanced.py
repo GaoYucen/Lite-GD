@@ -93,7 +93,7 @@ def run(seed,args):
     init_t0=time.perf_counter()
     data=HistoricalExact(args.links,args.orders,args.labels,args.exact)
     offline_data_init_s=time.perf_counter()-init_t0
-    tr,va,te=data.split(seed);dev=torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    split_seed=args.split_seed if args.split_seed is not None else seed\n    tr,va,te=data.split(split_seed);dev=torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train=loaders(data,tr,args.batch,shuffle=True,seed=seed)
     val=loaders(data,va,args.batch,shuffle=False,seed=seed)
     test=loaders(data,te,args.batch,shuffle=False,seed=seed)
@@ -184,7 +184,7 @@ def run(seed,args):
             "candidate_lambda":args.candidate_lambda,
         },args.checkpoint)
 
-    result={"seed":seed,"candidate_pos_weight":args.candidate_pos_weight,
+    result={"seed":seed,"split_seed":split_seed,"candidate_pos_weight":args.candidate_pos_weight,
             "candidate_lambda":args.candidate_lambda,"best_epoch":best_ep,
             "stop_epoch":ep,"val_decoder_ce":best,"pretrain_curve":curve,
             "timing":{"offline_data_init_s":offline_data_init_s,
@@ -198,7 +198,7 @@ def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--links",required=True,type=Path);ap.add_argument("--orders",required=True,type=Path)
     ap.add_argument("--labels",required=True,type=Path);ap.add_argument("--exact",required=True,type=Path)
-    ap.add_argument("--seed",type=int,required=True);ap.add_argument("--out",required=True,type=Path)
+    ap.add_argument("--seed",type=int,required=True);ap.add_argument("--split-seed",type=int,default=None);ap.add_argument("--out",required=True,type=Path)
     ap.add_argument("--candidate-pos-weight",type=float,default=3.0)
     ap.add_argument("--candidate-lambda",type=float,default=1.0)
     ap.add_argument("--hidden",type=int,default=64);ap.add_argument("--batch",type=int,default=8)
