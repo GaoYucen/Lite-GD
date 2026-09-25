@@ -150,6 +150,7 @@ def collate(batch):
     edge_y=torch.tensor(np.stack([x["edge_y"] for x in batch]))
     edge_idx=torch.zeros(B,N,dtype=torch.long);event=torch.full((B,N),-2,dtype=torch.long)
     coords=torch.zeros(B,N,2);valid=torch.zeros(B,N,dtype=torch.bool);target=torch.full((B,T),-100,dtype=torch.long)
+    road_cost=torch.zeros(B,N,N,dtype=torch.float32)
     n_events=torch.tensor([x["n_events"] for x in batch])
     for b,x in enumerate(batch):
         valid[b,:len(x["flat"])]=True;coords[b,:len(x["flat"])]=torch.tensor(x["points"])
@@ -157,8 +158,12 @@ def collate(batch):
             edge_idx[b,j]=x["_e2i"][e] if "_e2i" in x else 0
             event[b,j]=t
         target[b,:len(x["target"])]=torch.tensor(x["target"])
+        c=x.get("_road_cost")
+        if c is not None:
+            nnc=len(x["flat"])
+            road_cost[b,:nnc,:nnc]=torch.as_tensor(c,dtype=torch.float32)
     return dict(role=role,ratio=ratio,node_y=node_y,edge_y=edge_y,edge_idx=edge_idx,event=event,
-                coords=coords,valid=valid,target=target,n_events=n_events,raw=batch)
+                coords=coords,valid=valid,target=target,n_events=n_events,road_cost=road_cost,raw=batch)
 
 class JointEncoder(nn.Module):
     def __init__(self,node_feat,edge_base,src,dst,h=64):
@@ -254,12 +259,136 @@ class PaperDecoder(nn.Module):
             state=self.gru(rep[torch.arange(B,device=rep.device),choose],state)
         return sum(loss)/max(1,len(loss)),torch.stack(preds,1)
 
+
+class RoadMetricAttentionLayer(nn.Module):
+    """Candidate-level self-attention biased by directed road-network distance."""
+    def __init__(self,h,heads=4):
+        super().__init__()
+        if h%heads:
+            raise ValueError("hidden size must be divisible by metric heads")
+        self.h=h;self.heads=heads;self.d=h//heads
+        self.q=nn.Linear(h,h,bias=False);self.k=nn.Linear(h,h,bias=False);self.v=nn.Linear(h,h,bias=False)
+        self.pair_bias=nn.Sequential(nn.Linear(3,h),nn.SiLU(),nn.Linear(h,heads))
+        self.out=nn.Linear(h,h,bias=False)
+        self.n1=nn.LayerNorm(h);self.n2=nn.LayerNorm(h)
+        self.ff=nn.Sequential(nn.Linear(h,2*h),nn.SiLU(),nn.Linear(2*h,h))
+
+    def _split(self,x):
+        B,N,H=x.shape
+        return x.view(B,N,self.heads,self.d).permute(0,2,1,3)
+
+    def forward(self,x,pair_feat,valid):
+        q=self._split(self.q(x));k=self._split(self.k(x));v=self._split(self.v(x))
+        score=torch.matmul(q,k.transpose(-2,-1))/math.sqrt(self.d)
+        bias=self.pair_bias(pair_feat).permute(0,3,1,2)
+        score=score+bias
+        score=score.masked_fill(~valid[:,None,None,:],-1e9)
+        a=torch.softmax(score,dim=-1)
+        z=torch.matmul(a,v).permute(0,2,1,3).contiguous().view(x.size(0),x.size(1),self.h)
+        x=self.n1(x+self.out(z))
+        x=self.n2(x+self.ff(x))
+        return x*valid.unsqueeze(-1)
+
+
+class RoadMetricDecoder(PaperDecoder):
+    """Lite-GD decoder with graph embeddings plus directed shortest-path relations.
+
+    The legacy decoder uses Haversine/bearing geometry.  This decoder preserves
+    that branch, then refines candidate representations with relation-aware
+    self-attention whose pair bias is built from the exact directed road cost.
+    During autoregressive decoding, the current->candidate and reverse road
+    costs are also injected into each pointer score.
+    """
+    def __init__(self,h,max_points,layers=2,heads=4):
+        super().__init__(h,max_points)
+        self.rel=nn.ModuleList([RoadMetricAttentionLayer(h,heads) for _ in range(layers)])
+        self.step_metric=nn.Sequential(nn.Linear(3,h),nn.SiLU(),nn.Linear(h,h))
+        self.init_state=nn.Linear(2*h,h)
+        # Use independent projections instead of reusing the legacy score head.
+        self.metric_cand=nn.Linear(h,h,bias=False)
+        self.metric_state=nn.Linear(h,h,bias=False)
+        self.metric_v=nn.Linear(h,1,bias=False)
+
+    @staticmethod
+    def road_features(road_cost,valid):
+        pair=valid[:,:,None]&valid[:,None,:]
+        c=road_cost.float()
+        finite=torch.isfinite(c)
+        pos=pair&finite&(c>0)
+        safe=torch.where(pos,c,torch.zeros_like(c))
+        count=pos.sum(dim=(1,2),keepdim=True).clamp_min(1)
+        scale=(safe.sum(dim=(1,2),keepdim=True)/count).clamp_min(1e-6)
+        fallback=(4.0*scale).expand_as(c)
+        c=torch.where(finite,c,fallback).clamp_min(0)
+        fwd=torch.log1p(c/scale).clamp(max=8.0)
+        rev=fwd.transpose(1,2)
+        asym=torch.tanh(fwd-rev)
+        feat=torch.stack([fwd,rev,asym],dim=-1)
+        return feat*pair.unsqueeze(-1),pair
+
+    def forward(self,edge_h,edge_idx,event,coords,valid,target,n_events,road_cost,teacher=True):
+        B,N=edge_idx.shape;H=edge_h.size(-1)
+        cand=torch.gather(edge_h,1,edge_idx.unsqueeze(-1).expand(-1,-1,H))
+
+        # Keep the paper-aligned geometric crossover and graph gate.
+        fc=self.domain(coords,valid)
+        gfc=torch.sigmoid(self.gfc1(fc)+self.gfc2(cand))
+        ge=torch.sigmoid(self.ge1(fc)+self.ge2(cand))
+        rep=torch.tanh(self.merge(torch.cat([gfc*fc,ge*cand],-1)))
+
+        pair_feat,_=self.road_features(road_cost,valid)
+        for layer in self.rel:
+            rep=layer(rep,pair_feat,valid)
+
+        denom=valid.sum(1,keepdim=True).clamp_min(1).to(rep.dtype)
+        graph=(rep*valid.unsqueeze(-1)).sum(1)/denom
+        state=torch.tanh(self.init_state(torch.cat([rep[:,0],graph],dim=-1)))
+        current=torch.zeros(B,dtype=torch.long,device=rep.device)
+        done=torch.zeros(B,6,dtype=torch.bool,device=rep.device)
+        loss=[];preds=[];ar=torch.arange(B,device=rep.device)
+
+        for t in range(target.size(1)):
+            step_pair=pair_feat[ar,current]  # B,N,3; direction is current -> candidate
+            metric=self.step_metric(step_pair)
+            score=self.metric_v(torch.tanh(
+                self.metric_cand(rep)+self.metric_state(state)[:,None,:]+metric
+            )).squeeze(-1)
+
+            bad=~valid | (event<0)
+            for b in range(B):
+                if t>=int(n_events[b]):
+                    bad[b]=True;continue
+                for j in range(N):
+                    et=int(event[b,j])
+                    if et<0:continue
+                    if done[b,et] or (et%2==1 and not done[b,et-1]):
+                        bad[b,j]=True
+            score=score.masked_fill(bad,-1e9)
+            p=score.argmax(1);preds.append(p)
+            active=target[:,t]!=-100
+            if active.any():
+                loss.append(nn.functional.cross_entropy(score[active],target[active,t]))
+            choose=torch.where(active & teacher,target[:,t],p)
+            for b in range(B):
+                if active[b]:
+                    et=int(event[b,choose[b]])
+                    if et>=0:done[b,et]=True
+            state=self.gru(rep[ar,choose],state)
+            current=choose
+        return sum(loss)/max(1,len(loss)),torch.stack(preds,1)
+
 class Model(nn.Module):
-    def __init__(self,data,h=64):
+    def __init__(self,data,h=64,decoder_arch="legacy",metric_layers=2,metric_heads=4):
         super().__init__()
         self.encoder=JointEncoder(data.node_feat,data.edge_base,data.src,data.dst,h)
         self.node_head=nn.Linear(h,2);self.edge_head=nn.Linear(h,4)
-        self.decoder=PaperDecoder(h,data.max_points)
+        self.decoder_arch=decoder_arch
+        if decoder_arch=="legacy":
+            self.decoder=PaperDecoder(h,data.max_points)
+        elif decoder_arch=="road_metric":
+            self.decoder=RoadMetricDecoder(h,data.max_points,layers=metric_layers,heads=metric_heads)
+        else:
+            raise ValueError(f"unknown decoder_arch={decoder_arch}")
     def encode(self,b):return self.encoder(b["role"],b["ratio"])
     def pretrain_loss(self,b,balanced=True):
         nh,eh=self.encode(b)
@@ -283,11 +412,36 @@ class Model(nn.Module):
         return nl+el,nl.detach(),el.detach()
     def decoder_loss(self,b,teacher=True):
         _,eh=self.encode(b)
+        if self.decoder_arch=="road_metric":
+            return self.decoder(eh,b["edge_idx"],b["event"],b["coords"],b["valid"],
+                                b["target"],b["n_events"],b["road_cost"],teacher)
         return self.decoder(eh,b["edge_idx"],b["event"],b["coords"],b["valid"],b["target"],b["n_events"],teacher)
+
+def _candidate_road_cost(data,x):
+    cache=getattr(data,"_candidate_cost_cache",None)
+    if cache is None:
+        cache={};data._candidate_cost_cache=cache
+    cid=int(x["cid"])
+    if cid in cache:return cache[cid]
+    flat=x["flat"];n=len(flat)
+    cost=np.zeros((n,n),dtype=np.float32)
+    finite_vals=[]
+    for i,(ea,ra,_,_) in enumerate(flat):
+        for j,(eb,rb,_,_) in enumerate(flat):
+            if i==j:continue
+            z=float(data.point_dist(ea,ra,eb,rb))
+            cost[i,j]=z
+            if np.isfinite(z) and z>0:finite_vals.append(z)
+    if not np.isfinite(cost).all():
+        fallback=(max(finite_vals) if finite_vals else 1.0)*4.0
+        cost[~np.isfinite(cost)]=fallback
+    cache[cid]=cost
+    return cost
 
 def attach_edge_indices(batch,data):
     for x in batch:
         x["_e2i"]=data.e2i
+        x["_road_cost"]=_candidate_road_cost(data,x)
 
 def move(b,dev):
     return {k:(v.to(dev) if torch.is_tensor(v) else v) for k,v in b.items()}

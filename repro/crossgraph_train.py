@@ -23,7 +23,8 @@ def train_litegd(args,data,device):
     val=loaders(data,va,args.litegd_batch,shuffle=False,seed=args.seed)
     test=loaders(data,te,args.litegd_batch,shuffle=False,seed=args.seed)
 
-    model=Model(data,args.hidden).to(device)
+    model=Model(data,args.hidden,decoder_arch=args.litegd_arch,
+                metric_layers=args.metric_layers,metric_heads=args.metric_heads).to(device)
     opt=torch.optim.AdamW(model.parameters(),lr=args.pre_lr,weight_decay=1e-4)
     curve=[]
     for ep in range(1,args.pre_epochs+1):
@@ -68,7 +69,10 @@ def train_litegd(args,data,device):
     if state is None:raise RuntimeError("no Lite-GD checkpoint selected")
     model.load_state_dict(state)
     quality=eval_decomposed(model,test,data,device)
-    return model,{"pretrain_curve":curve,"finetune_history":history,"best_epoch":best_ep,"val_decoder_ce":best,"test":quality}
+    return model,{"litegd_arch":args.litegd_arch,"metric_layers":args.metric_layers,
+                  "metric_heads":args.metric_heads,"pretrain_curve":curve,
+                  "finetune_history":history,"best_epoch":best_ep,
+                  "val_decoder_ce":best,"test":quality}
 
 
 def main():
@@ -96,6 +100,9 @@ def main():
 
     # Candidate-aware Lite-GD fixed Phase-A protocol.
     ap.add_argument("--hidden",type=int,default=64)
+    ap.add_argument("--litegd-arch",choices=["legacy","road_metric"],default="legacy")
+    ap.add_argument("--metric-layers",type=int,default=2)
+    ap.add_argument("--metric-heads",type=int,default=4)
     ap.add_argument("--litegd-batch",type=int,default=8)
     ap.add_argument("--pre-epochs",type=int,default=8)
     ap.add_argument("--pre-lr",type=float,default=1e-3)
@@ -128,7 +135,10 @@ def main():
 
     if args.checkpoint:
         args.checkpoint.parent.mkdir(parents=True,exist_ok=True)
-        torch.save({"model":args.model,"seed":args.seed,"state_dict":model.state_dict()},args.checkpoint)
+        torch.save({"model":args.model,"seed":args.seed,"state_dict":model.state_dict(),
+                    "hidden":args.hidden,"litegd_arch":args.litegd_arch if args.model=="litegd" else None,
+                    "metric_layers":args.metric_layers if args.model=="litegd" else None,
+                    "metric_heads":args.metric_heads if args.model=="litegd" else None},args.checkpoint)
     args.out.parent.mkdir(parents=True,exist_ok=True);args.out.write_text(json.dumps(result,indent=2)+"\n")
     print("CROSSGRAPH_TRAIN_RESULT",json.dumps(result["test"],sort_keys=True),flush=True)
 
