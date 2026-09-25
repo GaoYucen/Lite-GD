@@ -331,6 +331,9 @@ def generate_one(s: Sampler):
         "_radius": actual_radius,
         "_driver_pickup_geo": dp_geo,
         "_pickup_dropoff_geo": pd_geo,
+        "_flat": flat,
+        "_point_cost": pc,
+        "_target_flat": path,
     }
 
 
@@ -361,6 +364,7 @@ def main():
                 raise
 
     max_k = max(max(r["event_counts"]) for r in records)
+    max_points = max(len(r["_flat"]) for r in records)
     n = len(records)
     driver_edge = np.asarray([r["driver_edge"] for r in records], dtype=np.int32)
     driver_ratio = np.asarray([r["driver_ratio"] for r in records], dtype=np.float32)
@@ -370,11 +374,26 @@ def main():
     exact_event_order = np.asarray([r["exact_event_order"] for r in records], dtype=np.int8)
     exact_local_indices = np.asarray([r["exact_local_indices"] for r in records], dtype=np.int8)
     exact_length = np.asarray([r["exact_length"] for r in records], dtype=np.float64)
+    point_count = np.asarray([len(r["_flat"]) for r in records], dtype=np.int16)
+    point_edge = np.full((n, max_points), -1, dtype=np.int32)
+    point_ratio = np.zeros((n, max_points), dtype=np.float32)
+    point_event = np.full((n, max_points), -2, dtype=np.int8)
+    point_coords = np.zeros((n, max_points, 2), dtype=np.float32)
+    point_cost = np.zeros((n, max_points, max_points), dtype=np.float32)
+    target_flat = np.full((n, 4), -1, dtype=np.int16)
     for i, r in enumerate(records):
         for e in range(4):
             k = r["event_counts"][e]
             event_edges[i, e, :k] = r["event_edges"][e]
             event_ratios[i, e, :k] = r["event_ratios"][e]
+        m=len(r["_flat"])
+        for j,(edge,ratio,event,_) in enumerate(r["_flat"]):
+            point_edge[i,j]=int(edge)
+            point_ratio[i,j]=float(ratio)
+            point_event[i,j]=int(event)
+            point_coords[i,j]=sampler.point_coord(int(edge),float(ratio))
+        point_cost[i,:m,:m]=r["_point_cost"].astype(np.float32)
+        target_flat[i]=np.asarray(r["_target_flat"],dtype=np.int16)
 
     split = np.full(n, 2, dtype=np.int8)
     rng = np.random.default_rng(args.split_seed)
@@ -402,6 +421,13 @@ def main():
         exact_event_order=exact_event_order,
         exact_local_indices=exact_local_indices,
         exact_length=exact_length,
+        point_count=point_count,
+        point_edge=point_edge,
+        point_ratio=point_ratio,
+        point_event=point_event,
+        point_coords=point_coords,
+        point_cost=point_cost,
+        target_flat=target_flat,
         split=split,
     )
 
