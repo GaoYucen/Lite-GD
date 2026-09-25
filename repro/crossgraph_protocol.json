@@ -2,7 +2,7 @@
   "schema_version": 1,
   "name": "Lite-GD cross-graph reproduction protocol",
   "source": "recovered historical Chengdu edge+ratio benchmark, 996 retained cases",
-  "source_stats_commit": "01a599a95c1907dfc0d1b40f31ad7f0348224cef",
+  "source_stats_commit": "7c4905f6b08802c2b8c25ff626021efd1da81570",
   "design": {
     "passengers": 2,
     "split": [
@@ -16,7 +16,8 @@
       "Candidate count and spatial scale are sampled from recovered Chengdu empirical statistics.",
       "Driver/pickup/dropoff are points on directed edges represented by (edge_index, ratio).",
       "Exact labels use pickup-before-own-dropoff precedence and one candidate per event.",
-      "The first cross-graph stage fixes passenger count to 2 to isolate graph-scale effects."
+      "The first cross-graph stage fixes passenger count to 2 to isolate graph-scale effects.",
+      "Historical drop-off candidates contain a small 0.001 ratio mass (388/15454); it is preserved in generation rather than silently corrected."
     ]
   },
   "candidate_count_histograms": {
