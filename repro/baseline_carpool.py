@@ -336,6 +336,11 @@ def evaluate(model, cases: CarpoolCases, ids, data: HistoricalExact, device, bat
 
 
 def train_pointer(args, data, cases, tr, va, te, device):
+    # A6000's system cuDNN is older than the PyTorch build. Runtime speed is
+    # not a primary baseline metric here, so use PyTorch's native CUDA LSTM
+    # kernels without changing the model or optimization protocol.
+    if device.type == "cuda":
+        torch.backends.cudnn.enabled = False
     model = CarpoolPointerNet(args.dim, args.ptr_layers).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     best = float("inf")
