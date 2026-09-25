@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse,json,math
+import argparse,json,math,time
 from pathlib import Path
 import numpy as np
 import torch
@@ -8,6 +8,7 @@ from torch import nn
 
 from historical_full_model import HistoricalExact, Model, loaders, move, seed_all
 from pretrain_diagnostics import pretrain_metrics
+from evaluation import summarize_route_rows, benchmark_inference
 
 def candidate_aux_loss(model,b,pos_weight=3.0,cand_lambda=1.0):
     nh,eh=model.encode(b)
@@ -77,22 +78,7 @@ def eval_decomposed(model,loader,data,dev):
                 })
 
     def summarize(rows):
-        pred=[r["pred"] for r in rows];opt=[r["opt"] for r in rows];g=[r["gap"] for r in rows]
-        steps=sum(r["steps"] for r in rows);n=len(rows)
-        return {
-          "n":n,
-          "gap":(float(np.mean(pred))/float(np.mean(opt))-1)*100,
-          "mean_case_gap":float(np.mean(g)),
-          "exact":100*sum(r["exact"] for r in rows)/n,
-          "pointer":100*sum(r["pointer_hits"] for r in rows)/steps,
-          "event_order_exact":100*sum(r["event_exact"] for r in rows)/n,
-          "event_step_acc":100*sum(r["event_hits"] for r in rows)/steps,
-          "candidate_by_event_acc":100*sum(r["candidate_hits"] for r in rows)/steps,
-          "within_1pct":100*sum(x<=1 for x in g)/n,
-          "within_3pct":100*sum(x<=3 for x in g)/n,
-          "within_5pct":100*sum(x<=5 for x in g)/n,
-          "within_10pct":100*sum(x<=10 for x in g)/n,
-        }
+        return summarize_route_rows(rows)
 
     out={}
     allrows=[]
@@ -104,7 +90,9 @@ def eval_decomposed(model,loader,data,dev):
 
 def run(seed,args):
     seed_all(seed)
+    init_t0=time.perf_counter()
     data=HistoricalExact(args.links,args.orders,args.labels,args.exact)
+    offline_data_init_s=time.perf_counter()-init_t0
     tr,va,te=data.split(seed);dev=torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train=loaders(data,tr,args.batch,shuffle=True,seed=seed)
     val=loaders(data,va,args.batch,shuffle=False,seed=seed)
@@ -113,6 +101,7 @@ def run(seed,args):
     model=Model(data,args.hidden).to(dev)
     opt=torch.optim.AdamW(model.parameters(),lr=args.pre_lr,weight_decay=1e-4)
     curve=[]
+    pre_t0=time.perf_counter()
     for ep in range(1,args.pre_epochs+1):
         model.train();vals=[]
         for b in train:
@@ -129,11 +118,14 @@ def run(seed,args):
                  "val":pm}
             curve.append(rec);print("CAND_PRE",json.dumps(rec,sort_keys=True))
 
+    pretrain_s=time.perf_counter()-pre_t0
+
     # Standard same-LR decoder fine-tuning, because the previous diagnostic
     # showed reduced encoder LR was worse on both representative seeds.
     train_ft=loaders(data,tr,args.batch,shuffle=True,seed=seed)
     opt=torch.optim.AdamW(model.parameters(),lr=args.lr,weight_decay=1e-4)
     best=1e30;state=None;bad=0;best_ep=0
+    ft_t0=time.perf_counter()
     for ep in range(1,args.epochs+1):
         model.train()
         for b in train_ft:
@@ -150,11 +142,55 @@ def run(seed,args):
         else: bad+=1
         if bad>=args.patience:break
 
+    finetune_s=time.perf_counter()-ft_t0
     model.load_state_dict(state)
+    quality=eval_decomposed(model,test,data,dev)
+
+    runtime={}
+    if args.runtime:
+        test1_cpu=list(loaders(data,te,1,shuffle=False,seed=seed))
+        testn_cpu=list(loaders(data,te,args.runtime_batch,shuffle=False,seed=seed))
+
+        def infer_fn(m,b):
+            _,eh=m.encode(b)
+            dummy=torch.full_like(b["target"],-100)
+            _,p=m.decoder(
+                eh,b["edge_idx"],b["event"],b["coords"],b["valid"],
+                dummy,b["n_events"],teacher=False
+            )
+            return p
+
+        runtime["accelerator"]=benchmark_inference(
+            model,test1_cpu,testn_cpu,move,dev,infer_fn,
+            warmup=args.runtime_warmup,rounds=args.runtime_rounds
+        )
+        if args.runtime_cpu:
+            cpu=torch.device("cpu")
+            cpu_model=Model(data,args.hidden).to(cpu)
+            cpu_model.load_state_dict(state)
+            runtime["cpu"]=benchmark_inference(
+                cpu_model,test1_cpu,testn_cpu,move,cpu,infer_fn,
+                warmup=min(args.runtime_warmup,10),
+                rounds=max(1,min(args.runtime_rounds,2))
+            )
+
+    if args.checkpoint is not None:
+        args.checkpoint.parent.mkdir(parents=True,exist_ok=True)
+        torch.save({
+            "seed":seed,
+            "state_dict":state,
+            "hidden":args.hidden,
+            "candidate_pos_weight":args.candidate_pos_weight,
+            "candidate_lambda":args.candidate_lambda,
+        },args.checkpoint)
+
     result={"seed":seed,"candidate_pos_weight":args.candidate_pos_weight,
             "candidate_lambda":args.candidate_lambda,"best_epoch":best_ep,
             "stop_epoch":ep,"val_decoder_ce":best,"pretrain_curve":curve,
-            "test":eval_decomposed(model,test,data,dev)}
+            "timing":{"offline_data_init_s":offline_data_init_s,
+                      "pretrain_s":pretrain_s,"finetune_s":finetune_s,
+                      "runtime":runtime},
+            "test":quality}
     args.out.parent.mkdir(parents=True,exist_ok=True);args.out.write_text(json.dumps(result,indent=2))
     print("CAND_RESULT",json.dumps(result,sort_keys=True))
 
@@ -169,6 +205,12 @@ def main():
     ap.add_argument("--pre-epochs",type=int,default=8);ap.add_argument("--pre-lr",type=float,default=1e-3)
     ap.add_argument("--epochs",type=int,default=55);ap.add_argument("--lr",type=float,default=5e-4)
     ap.add_argument("--patience",type=int,default=10)
+    ap.add_argument("--runtime",action="store_true")
+    ap.add_argument("--runtime-cpu",action="store_true")
+    ap.add_argument("--runtime-warmup",type=int,default=20)
+    ap.add_argument("--runtime-rounds",type=int,default=5)
+    ap.add_argument("--runtime-batch",type=int,default=32)
+    ap.add_argument("--checkpoint",type=Path,default=None)
     a=ap.parse_args();run(a.seed,a)
 
 if __name__=="__main__":main()
