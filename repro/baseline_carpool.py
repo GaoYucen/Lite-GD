@@ -55,7 +55,7 @@ class CarpoolCases:
         x = self.data.case_tensors(cid)
         flat = x["flat"]
         n = len(flat)
-        cost = np.zeros((n, n), dtype=np.float32)
+        cost = np.zeros((n, n), dtype=np.float64)
         for i, (ea, ra, _, _) in enumerate(flat):
             for j, (eb, rb, _, _) in enumerate(flat):
                 if i != j:
@@ -84,8 +84,8 @@ class CarpoolCases:
             "event": torch.tensor(np.stack([x["event"] for x in rows]), device=device),
             "target": torch.tensor(np.stack([x["target"] for x in rows]), device=device),
             "n_events": torch.tensor([x["n_events"] for x in rows], device=device),
-            "opt": torch.tensor([x["opt"] for x in rows], dtype=torch.float32, device=device),
-            "cost": torch.tensor(np.stack([x["cost"] for x in rows]), device=device),
+            "opt": torch.tensor([x["opt"] for x in rows], dtype=torch.float64, device=device),
+            "cost": torch.tensor(np.stack([x["cost"] for x in rows]), dtype=torch.float64, device=device),
             "passengers": rows[0]["passengers"],
         }
 
