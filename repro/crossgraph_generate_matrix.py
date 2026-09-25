@@ -104,6 +104,12 @@ def target_center(rng, origin, radius):
 
 
 def sample_group(rng, tree, point_xy, center, k, radius):
+    # Snap the synthetic event centre onto the road-support used by this
+    # pickup/dropoff candidate type before drawing the local candidate set.
+    # This avoids artificially inflating group radius when a geometric target
+    # falls inside a road-sparse block.
+    _, anchor = tree.query(center, k=1)
+    center = point_xy[int(anchor)]
     R = max(float(radius), 100.0)
     ids = tree.query_ball_point(center, r=R)
     while len(ids) < k and R < 8000:
