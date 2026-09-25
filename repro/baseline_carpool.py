@@ -26,6 +26,7 @@ import torch
 from torch import nn
 
 from historical_full_model import HistoricalExact
+from crossgraph_data import CrossGraphExact
 from evaluation import summarize_route_rows
 
 
@@ -470,10 +471,12 @@ def greedy_evaluate(cases: CarpoolCases, ids, data: HistoricalExact):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--links", required=True, type=Path)
-    ap.add_argument("--orders", required=True, type=Path)
-    ap.add_argument("--labels", required=True, type=Path)
-    ap.add_argument("--exact", required=True, type=Path)
+    ap.add_argument("--links", type=Path)
+    ap.add_argument("--orders", type=Path)
+    ap.add_argument("--labels", type=Path)
+    ap.add_argument("--exact", type=Path)
+    ap.add_argument("--benchmark-dir", type=Path)
+    ap.add_argument("--apsp", type=Path)
     ap.add_argument("--model", choices=["ptrnet", "am", "greedy"], required=True)
     ap.add_argument("--split-seed", type=int, default=20260925)
     ap.add_argument("--seed", type=int, default=1234)
@@ -493,7 +496,14 @@ def main():
     args = ap.parse_args()
 
     seed_all(args.seed)
-    data = HistoricalExact(args.links, args.orders, args.labels, args.exact)
+    if args.benchmark_dir is not None:
+        if args.apsp is None:
+            raise ValueError("--apsp is required with --benchmark-dir")
+        data = CrossGraphExact(args.benchmark_dir, args.apsp, require_routes=False)
+    else:
+        if any(x is None for x in (args.links,args.orders,args.labels,args.exact)):
+            raise ValueError("historical mode requires --links --orders --labels --exact")
+        data = HistoricalExact(args.links, args.orders, args.labels, args.exact)
     tr, va, te = data.split(args.split_seed)
     cases = CarpoolCases(data, tr)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
