@@ -135,6 +135,7 @@ def main():
         "cases":int(len(retained_ids)),
         "passenger_counts":per_passenger,
         "candidate_count_per_event":summarize(group_counts),
+        "candidate_count_hist":{str(int(k)):int(v) for k,v in zip(*np.unique(np.asarray(group_counts,dtype=np.int64),return_counts=True))},
         "candidate_count_histogram":value_counts(group_counts),
         "pickup_candidate_count_histogram":value_counts(pickup_group_counts),
         "dropoff_candidate_count_histogram":value_counts(dropoff_group_counts),
