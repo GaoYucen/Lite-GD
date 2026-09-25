@@ -125,17 +125,37 @@ class RoadGraph:
         return (1.0 - ratio) * self.node_lonlat[self.src[edge]] + ratio * self.node_lonlat[self.dst[edge]]
 
 
-def load_city_graph(name: str, protocol_npz: Path, raw_edges: Path) -> RoadGraph:
+def load_city_graph(
+    name: str,
+    protocol_npz: Path,
+    raw_nodes: Path,
+    raw_edges: Path,
+) -> RoadGraph:
     z = np.load(protocol_npz, mmap_mode="r")
-    coords = np.asarray(z["coordinates"], dtype=np.float64)
+    # The distance project's certified protocol stores local UTM coordinates
+    # in metres (graph mean subtracted), not lon/lat.
+    coords_xy = np.asarray(z["coordinates"], dtype=np.float64)
     original = np.asarray(z["original_node_ids"], dtype=np.int64)
-    if coords.shape[1] != 2:
-        raise ValueError("coordinates must be Nx2")
+    if coords_xy.ndim != 2 or coords_xy.shape[1] != 2 or len(coords_xy) != len(original):
+        raise ValueError("invalid projected protocol coordinates")
+
+    # Recover model-facing WGS84 lon/lat exactly from the native node table.
+    lonlat_by_id: dict[int, tuple[float, float]] = {}
+    with raw_nodes.open(newline="") as f:
+        for row in csv.DictReader(f):
+            lonlat_by_id[int(row["NodeID"])] = (
+                float(row["Longitude"]),
+                float(row["Latitude"]),
+            )
+    try:
+        node_lonlat = np.asarray([lonlat_by_id[int(v)] for v in original], dtype=np.float64)
+    except KeyError as exc:
+        raise ValueError(f"protocol original node missing from native node table: {exc}") from exc
     if not (
-        np.all(np.abs(coords[:, 0]) <= 180.0)
-        and np.all(np.abs(coords[:, 1]) <= 90.0)
+        np.all(np.abs(node_lonlat[:, 0]) <= 180.0)
+        and np.all(np.abs(node_lonlat[:, 1]) <= 90.0)
     ):
-        raise ValueError("expected lon/lat coordinates for city graph")
+        raise ValueError("invalid recovered lon/lat")
 
     max_id = int(original.max())
     mapping = np.full(max_id + 1, -1, dtype=np.int64)
@@ -161,8 +181,8 @@ def load_city_graph(name: str, protocol_npz: Path, raw_edges: Path) -> RoadGraph
         src=src,
         dst=dst,
         weight=weight,
-        node_xy=lonlat_to_local_xy(coords),
-        node_lonlat=coords,
+        node_xy=coords_xy,
+        node_lonlat=node_lonlat,
         original_node_ids=original,
     )
 
