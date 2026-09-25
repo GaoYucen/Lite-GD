@@ -513,3 +513,93 @@ reproduction on larger native-directed road networks, using the already audited
 `distance` project assets.  The benchmark generator must preserve the physical
 candidate/OD scale of the recovered Chengdu workload so graph size is the main
 changed variable.
+
+
+## 16. Cross-graph directed-road benchmark construction
+
+After fixed-split baseline closure, the reproduction moved to larger native-directed
+road graphs already audited in `GaoYucen/distance`.
+
+### 16.1 Frozen graph assets and exact oracles
+
+| Graph | Nodes | Directed arcs | Exact-distance asset |
+|---|---:|---:|---|
+| Historical Chengdu | 1,901 | 5,941 | recovered APSP / exact relabel pipeline |
+| Jinan | 8,840 | 23,206 | newly certified directed APSP |
+| Shenzhen | 11,738 | 27,105 | existing certified directed APSP |
+| DIMACS-FLA | 1,070,376 | 2,687,902 | existing RoutingKit CH exact oracle |
+
+For Jinan, a 625,164,928-byte all-pairs directed matrix was built in 8.63 s and
+checked against **all frozen train/validation/test OD labels** (100k/10k/10k
+unordered groups, both directions).  Maximum and mean absolute/relative error
+were all exactly zero.
+
+Full predecessor matrices were also built for exact route reconstruction:
+
+- Jinan: 312,582,528 bytes, 9.32 s, 0/1000 random path sanity failures;
+- Shenzhen: 551,122,704 bytes, 17.23 s, 0/1000 random path sanity failures.
+
+### 16.2 Chengdu empirical task-scale protocol
+
+The recovered 996-case historical benchmark was characterized before generating
+new cases.  Important medians are:
+
+- candidates per event: **8** (range 4--10; mean 7.56);
+- candidate-group radius: **489.83 m**;
+- driver -> exact pickup geographic distance: **7.28 km**;
+- exact pickup -> own dropoff geographic distance: **8.21 km**;
+- driver -> exact pickup directed-road distance: **8.96 km**;
+- exact pickup -> own dropoff directed-road distance: **9.93 km**;
+- exact route directed-road length: **31.18 km**.
+
+The historical edge-ratio convention is also preserved:
+
+- driver ratio: 0.001;
+- pickup candidate ratio: 0.001;
+- dropoff candidate ratio: overwhelmingly 0.999.
+
+The first cross-graph graph-scale study intentionally fixes **two passengers**
+(the dominant historical setting: 946/996 retained cases) and samples the
+candidate count, candidate radius and OD spatial spans from these empirical
+Chengdu distributions.
+
+### 16.3 Corrected 1K pilot certification
+
+An initial Shenzhen pilot was correctly **rejected by certification** because
+the distance project's protocol `coordinates` array stores projected,
+graph-centered metres rather than longitude/latitude.  Treating it as lon/lat
+produced nonsensical kilometre-scale candidate radii.  The generator was fixed
+to restore true `Longitude, Latitude` from the native node CSV through
+`original_node_ids`.
+
+The corrected pilots use exact directed distances and paper-precedence DP:
+
+| Quantity (median) | Chengdu reference | Jinan 1K | Ratio | Shenzhen 1K | Ratio |
+|---|---:|---:|---:|---:|---:|
+| Candidates/event | 8 | 8 | 1.00 | 8 | 1.00 |
+| Candidate radius | 489.83 m | 439.04 m | 0.90 | 416.37 m | 0.85 |
+| Driver -> pickup geo | 7.28 km | 7.12 km | 0.98 | 7.27 km | 1.00 |
+| Pickup -> dropoff geo | 8.21 km | 7.86 km | 0.96 | 7.74 km | 0.94 |
+| Driver -> pickup road | 8.96 km | 9.54 km | 1.06 | 10.04 km | 1.12 |
+| Pickup -> dropoff road | 9.93 km | 10.07 km | 1.01 | 10.46 km | 1.05 |
+| Exact route length | 31.18 km | 36.68 km | 1.18 | 36.73 km | 1.18 |
+
+The route-length increase is a property of the different directed road
+topologies; the controlled geographic task spans and candidate-set scales remain
+matched.  Therefore both corrected pilots pass the graph-scale dataset gate.
+
+### 16.4 Next cross-graph gate
+
+The accepted pipeline is now:
+
+1. generate 10,000 two-passenger cases on Jinan and Shenzhen with the frozen
+   empirical Chengdu protocol;
+2. attach exact node/edge routes using the certified predecessor matrices and
+   verify exact-route cost against the DP objective case by case;
+3. freeze one 8:1:1 split per graph;
+4. rerun DisGreedy, PointerNet, AM-style and Lite-GD with the same two primary
+   metrics:
+   - Mean-case Gap;
+   - Event-step Accuracy.
+5. only after the medium-scale table is complete, move to million-node FLA,
+   where the published filtering mechanism becomes necessary for Lite-GD.
