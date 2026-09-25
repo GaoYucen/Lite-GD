@@ -44,9 +44,12 @@ def haversine_m(a, b):
     return 2*EARTH_M*np.arcsin(np.sqrt(np.clip(h,0,1)))
 
 
-def project_xy(coords):
+def project_xy(coords, meta=None):
     coords=np.asarray(coords,dtype=np.float64)
-    lon0=float(np.mean(coords[:,0])); lat0=float(np.mean(coords[:,1]))
+    if meta is None:
+        lon0=float(np.mean(coords[:,0])); lat0=float(np.mean(coords[:,1]))
+    else:
+        lon0,lat0=map(float,meta)
     x=(coords[:,0]-lon0)*111320.0*math.cos(math.radians(lat0))
     y=(coords[:,1]-lat0)*110540.0
     return np.stack([x,y],1), (lon0,lat0)
@@ -360,7 +363,7 @@ def main():
     pick_ref=float(np.median(proto["pickup_ratios"]))
     drop_ref=float(np.median(proto["dropoff_ratios"]))
     pick_coords=g.point_coords(np.full(g.n_edges,pick_ref)); drop_coords=g.point_coords(np.full(g.n_edges,drop_ref))
-    pick_xy,_=project_xy(pick_coords); drop_xy,_=project_xy(drop_coords)
+    pick_xy,_=project_xy(pick_coords,g.proj_meta); drop_xy,_=project_xy(drop_coords,g.proj_meta)
     pickup_tree=cKDTree(pick_xy); drop_tree=cKDTree(drop_xy)
 
     cases=[]
