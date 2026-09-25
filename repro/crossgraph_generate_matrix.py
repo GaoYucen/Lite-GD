@@ -141,14 +141,12 @@ def sample_group(rng, tree, point_xy, center, k, radius):
     # falls inside a road-sparse block.
     _, anchor = tree.query(center, k=1)
     center = point_xy[int(anchor)]
-    R = max(0.85 * float(radius), 220.0)  # calibrated once on Jinan pilot; frozen for confirmations
+    R = max(float(radius), 100.0)
     ids = tree.query_ball_point(center, r=R)
-    while len(ids) < k and R < 8000:
-        R *= 1.4
-        ids = tree.query_ball_point(center, r=R)
+    # Do not silently widen the physical candidate area.  A road-sparse event
+    # centre is rejected and the whole synthetic case is resampled instead.
     if len(ids) < k:
-        _, q = tree.query(center, k=k)
-        ids = np.atleast_1d(q).astype(int).tolist()
+        return None
     ids = np.asarray(sorted(set(map(int, ids))), dtype=np.int64)
     if len(ids) > k:
         d = np.linalg.norm(point_xy[ids] - center[None, :], axis=1)
@@ -220,7 +218,7 @@ def build_case(rng, road: Road, max_attempts=200):
             else:
                 ids = sample_group(rng, road.drop_tree, road.drop_xy, centers[e], k, rad)
                 ratio = 0.999
-            if len(np.unique(ids)) < k:
+            if ids is None or len(np.unique(ids)) < k:
                 ok = False
                 break
             groups.append((ids, ratio))
