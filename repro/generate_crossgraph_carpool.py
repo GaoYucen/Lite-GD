@@ -109,11 +109,22 @@ def project_xy(coords: np.ndarray) -> np.ndarray:
     return np.stack([x, y], axis=1)
 
 
-def load_city_graph(npz_path: Path, raw_edges: Path):
+def load_city_graph(npz_path: Path, raw_nodes: Path, raw_edges: Path):
     z = np.load(npz_path, mmap_mode="r")
-    coords = np.asarray(z["coordinates"], dtype=np.float64)
     original = np.asarray(z["original_node_ids"], dtype=np.int64)
     mapping = {int(v): i for i, v in enumerate(original)}
+
+    # distance project stores projected/centered coordinates for learning.
+    # Lite-GD needs geographic lon/lat for its distance/angle crossover and
+    # for physically matched cross-city sampling, so recover native lon/lat.
+    native_xy = {}
+    with raw_nodes.open(newline="") as fh:
+        for row in csv.DictReader(fh):
+            native_xy[int(row["NodeID"])] = (float(row["Longitude"]), float(row["Latitude"]))
+    missing = [int(v) for v in original if int(v) not in native_xy]
+    if missing:
+        raise ValueError(f"missing native coordinates for {len(missing)} LSCC nodes")
+    coords = np.asarray([native_xy[int(v)] for v in original], dtype=np.float64)
 
     best: Dict[Tuple[int, int], float] = {}
     with raw_edges.open(newline="") as fh:
@@ -341,6 +352,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", required=True)
     ap.add_argument("--graph-npz", required=True, type=Path)
+    ap.add_argument("--raw-nodes", required=True, type=Path)
     ap.add_argument("--raw-edges", required=True, type=Path)
     ap.add_argument("--allpairs", required=True, type=Path)
     ap.add_argument("--cases", type=int, default=1000)
@@ -349,7 +361,7 @@ def main():
     ap.add_argument("--out-dir", required=True, type=Path)
     args = ap.parse_args()
 
-    coords, src, dst, weight, original = load_city_graph(args.graph_npz, args.raw_edges)
+    coords, src, dst, weight, original = load_city_graph(args.graph_npz, args.raw_nodes, args.raw_edges)
     dist, built = build_or_load_allpairs(args.allpairs, len(coords), src, dst, weight)
     sampler = Sampler(coords, src, dst, weight, dist, args.seed)
 
