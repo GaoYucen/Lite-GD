@@ -343,3 +343,101 @@ The next experiment keeps the paper four-class edge objective but adds:
 2. a moderate 5x repeat of three-passenger training cases, with validation/test untouched.
 
 These are tested separately and together before any filter or larger model is introduced.
+
+
+## 13. Route-aware / three-passenger balancing: rejected as the default
+
+Mechanism diagnostics showed that sparse exact-route edge classes are difficult to learn and that the three-passenger subset is extremely small. Two targeted interventions were tested:
+
+1. an auxiliary route-vs-non-route edge loss;
+2. repeating three-passenger training cases 5× while leaving validation/test untouched.
+
+Representative held-out results:
+
+| Seed | Variant | 2p Gap | 3p Gap | Overall Gap |
+|---|---|---:|---:|---:|
+| 20260926 | route auxiliary | 4.60% | 44.76% | 7.22% |
+| 20260926 | route auxiliary + 3p repeat5 | 4.95% | 24.87% | 6.26% |
+| 20260927 | route auxiliary | 3.81% | 31.44% | 5.59% |
+| 20260927 | route auxiliary + 3p repeat5 | 6.50% | 25.96% | 7.75% |
+
+Repeating three-passenger cases does reduce the three-passenger gap relative to the corresponding route-auxiliary run, but it consistently trades away two-passenger quality and is unstable overall. Because the final test split contains only about five three-passenger cases, a one-case change is already a 20-point change in three-passenger exact accuracy.
+
+**Decision:** do not use mechanical 5× three-passenger oversampling as the unified Lite-GD default. If three-passenger specialization is needed later, treat it as a separate low-data/generalization problem.
+
+## 14. Candidate-aware pre-training: current best historical edge+ratio variant
+
+The pre-training diagnostics showed a clear class-imbalance bottleneck:
+
+- event ordering after fine-tuning is already fairly accurate;
+- exact-route/candidate discrimination is much weaker;
+- the four-class edge head is dominated by the `neither` class.
+
+A candidate-aware auxiliary objective was therefore added **without changing the decoder or the train/validation/test splits**. It keeps the paper node/edge objectives and adds a binary loss only on candidate edges:
+
+`candidate-only vs candidate-and-exact-route`.
+
+With candidate-positive weight 3, validation `candidate_and_route` F1 increased from roughly 29% under ordinary pre-training to:
+
+- **42.25%** on seed 20260925;
+- **37.50%** on seed 20260926;
+- **44.67%** on seed 20260927.
+
+Final held-out route results:
+
+| Seed | Standard pre-train Gap | Candidate-aware Gap | Improvement | 2p Gap | 3p Gap |
+|---|---:|---:|---:|---:|---:|
+| 20260925 | 6.60% | **5.71%** | **-0.89pt** | 4.57% | 20.40% |
+| 20260926 | 5.78% | **5.16%** | **-0.62pt** | 3.59% | 27.58% |
+| 20260927 | 5.60% | **5.38%** | **-0.22pt** | 3.83% | 27.79% |
+| **Mean** | **5.99%** | **5.42%** | **-0.58pt** | **4.00%** | **25.26%** |
+
+Across the three seeds:
+
+- candidate-aware gap mean/std: **5.42% / 0.23%**;
+- ordinary pre-trained gap mean/std: **5.99% / 0.43%**;
+- candidate-aware improves every seed;
+- mean absolute reduction vs ordinary pre-training: **0.58 percentage points**;
+- mean relative reduction vs ordinary pre-training: about **9.4%**;
+- scratch historical full-model gap was about **6.40%**, so the total reduction from scratch is about **0.98 points**.
+
+### Sequence-error decomposition
+
+The candidate-aware decoder exposes why exact sequence accuracy remains low.
+
+Three-seed means:
+
+- event-order exact accuracy: **72.0%**;
+- event-order step accuracy: **83.9%**;
+- candidate-by-event accuracy: **42.0%**;
+- complete exact sequence accuracy: **1.33%**;
+- pointer-position accuracy: **35.3%**;
+- illegal route rate: **0%**.
+
+Near-optimal route quality is much stronger than exact-sequence identity:
+
+- within 1% of OPT: about **11.3%**;
+- within 3%: about **46.0%**;
+- within 5%: about **67.0%**;
+- within 10%: about **89.7%**.
+
+This leads to a concrete diagnosis:
+
+> **The current model mostly understands the legal event order, but it still struggles to choose the exact road point inside each semantic pickup/drop-off candidate set.**
+
+Therefore, the next useful work should target candidate discrimination or candidate-set scoring directly. More global decoder complexity or mechanical three-passenger oversampling is not the current priority.
+
+### Current preferred historical edge+ratio configuration
+
+For the recovered historical benchmark, the current preferred model is:
+
+- paper-precedence exact relabeling;
+- four ambiguous historical cases excluded;
+- case-conditioned joint node/edge GCN;
+- original node/edge pre-training objectives;
+- candidate-aware auxiliary edge loss;
+- distance + direction-angle crossover;
+- gating;
+- rule-constrained pointer decoder.
+
+This configuration is currently the most stable full-model reconstruction on the available edge+ratio data. It is still **not** a reproduction of the published 10k benchmark because that benchmark is absent from the repository history.
