@@ -505,7 +505,7 @@ class Model(nn.Module):
         return nl+el,nl.detach(),el.detach()
     def decoder_loss(self,b,teacher=True):
         _,eh=self.encode(b)
-        if self.decoder_arch=="road_metric":
+        if self.decoder_arch in ("road_metric","road_metric_hier"):
             return self.decoder(eh,b["edge_idx"],b["event"],b["coords"],b["valid"],
                                 b["target"],b["n_events"],b["road_cost"],teacher)
         return self.decoder(eh,b["edge_idx"],b["event"],b["coords"],b["valid"],b["target"],b["n_events"],teacher)
