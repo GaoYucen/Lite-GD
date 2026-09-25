@@ -46,6 +46,13 @@ def summarize(xs):
     }
 
 
+
+
+def value_counts(xs):
+    vals,cnt=np.unique(np.asarray(xs),return_counts=True)
+    return {str(float(v) if np.issubdtype(vals.dtype,np.floating) else int(v)):int(n)
+            for v,n in zip(vals,cnt)}
+
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--links",required=True,type=Path)
@@ -57,13 +64,14 @@ def main():
 
     data=HistoricalExact(args.links,args.orders,args.labels,args.exact)
     group_counts=[]
+    pickup_group_counts=[]; dropoff_group_counts=[]
     within_pair=[]
     group_diameter=[]
     group_radius=[]
     driver_pick_geo=[]; driver_pick_road=[]
     pickup_drop_geo=[]; pickup_drop_road=[]
     route_lengths=[]
-    ratios=[]
+    ratios=[]; pickup_ratios=[]; dropoff_ratios=[]; driver_ratios=[]
 
     per_passenger={2:{"cases":0},3:{"cases":0}}
     retained_ids=[int(c.case_id) for c in data.cases if int(c.case_id) not in AMBIGUOUS_GROUP_CASES]
@@ -75,13 +83,17 @@ def main():
         q=n_events//2
         per_passenger.setdefault(q,{"cases":0})["cases"]+=1
 
+        driver_ratios.append(float(flat[0][1]))
         by_event={}
         for j,(_,r,e,_) in enumerate(flat):
             if int(e)>=0:
-                by_event.setdefault(int(e),[]).append(j)
+                ev=int(e)
+                by_event.setdefault(ev,[]).append(j)
                 ratios.append(float(r))
+                (pickup_ratios if ev%2==0 else dropoff_ratios).append(float(r))
         for e,idx in by_event.items():
             group_counts.append(len(idx))
+            (pickup_group_counts if e%2==0 else dropoff_group_counts).append(len(idx))
             gp=pts[idx]
             if len(gp)>1:
                 vals=[]
@@ -117,6 +129,9 @@ def main():
         "cases":int(len(retained_ids)),
         "passenger_counts":per_passenger,
         "candidate_count_per_event":summarize(group_counts),
+        "candidate_count_histogram":value_counts(group_counts),
+        "pickup_candidate_count_histogram":value_counts(pickup_group_counts),
+        "dropoff_candidate_count_histogram":value_counts(dropoff_group_counts),
         "candidate_pairwise_haversine_m":summarize(within_pair),
         "candidate_group_diameter_haversine_m":summarize(group_diameter),
         "candidate_group_radius_from_lonlat_centroid_m":summarize(group_radius),
@@ -126,6 +141,13 @@ def main():
         "exact_pickup_to_own_dropoff_directed_road_m":summarize(pickup_drop_road),
         "exact_route_directed_road_m":summarize(route_lengths),
         "candidate_ratio":summarize(ratios),
+        "candidate_ratio_histogram":value_counts(ratios),
+        "pickup_candidate_ratio":summarize(pickup_ratios),
+        "pickup_candidate_ratio_histogram":value_counts(pickup_ratios),
+        "dropoff_candidate_ratio":summarize(dropoff_ratios),
+        "dropoff_candidate_ratio_histogram":value_counts(dropoff_ratios),
+        "driver_ratio":summarize(driver_ratios),
+        "driver_ratio_histogram":value_counts(driver_ratios),
         "generator_policy_note":(
             "Future directed-road benchmarks should match the candidate-group physical "
             "dispersion and OD spatial-span distributions, while changing road graph scale."
