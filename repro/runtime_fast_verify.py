@@ -36,16 +36,16 @@ def bench_split(model,cpu_batches,device,warm=10):
     with torch.no_grad():
         for b in gpu_batches[:warm]:
             _,eh=model.encode(b)
-            model.decoder(eh,b["edge_idx"],b["event"],b["coords"],b["valid"],
-                          b["target"],b["n_events"],b["road_cost"],False)
+            model.decoder.infer(eh,b["edge_idx"],b["event"],b["coords"],b["valid"],
+                                b["n_events"],b["road_cost"])
         torch.cuda.synchronize()
         for b in gpu_batches:
             torch.cuda.synchronize();t=time.perf_counter()
             _,eh=model.encode(b)
             torch.cuda.synchronize();enc.append((time.perf_counter()-t)*1000)
             t=time.perf_counter()
-            model.decoder(eh,b["edge_idx"],b["event"],b["coords"],b["valid"],
-                          b["target"],b["n_events"],b["road_cost"],False)
+            model.decoder.infer(eh,b["edge_idx"],b["event"],b["coords"],b["valid"],
+                                b["n_events"],b["road_cost"])
             torch.cuda.synchronize();dec.append((time.perf_counter()-t)*1000)
     return {"encode":stat(enc),"decoder":stat(dec)}
 
@@ -70,14 +70,13 @@ def main():
     old.eval();fast.eval()
 
     # Exact greedy-prediction equivalence on full test split.
-    mismatches=0;max_loss_abs=0.0
+    mismatches=0
     with torch.no_grad():
         for cid in te:
             b=move(next(iter(loaders(data,[cid],1,shuffle=False,seed=a.seed))),dev)
-            lo,po=old.predict(b)
-            lf,pf=fast.predict(b)
+            po=old.predict(b)
+            pf=fast.predict(b)
             mismatches+=int(not torch.equal(po,pf))
-            max_loss_abs=max(max_loss_abs,abs(float(lo)-float(lf)))
 
     test_old=list(loaders(data,te,8,shuffle=False,seed=a.seed))
     q_old=eval_decomposed(old,test_old,data,dev)
@@ -92,7 +91,6 @@ def main():
     out={
       "ok":mismatches==0,
       "prediction_mismatches":mismatches,
-      "max_loss_abs_diff":max_loss_abs,
       "quality_old":q_old["overall"],
       "quality_fast":q_fast["overall"],
       "runtime_old":runtime_old,
