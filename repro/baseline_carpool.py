@@ -58,11 +58,16 @@ class CarpoolCases:
         x = get_case(cid)
         flat = x["flat"]
         n = len(flat)
-        cost = np.zeros((n, n), dtype=np.float64)
-        for i, (ea, ra, _, _) in enumerate(flat):
-            for j, (eb, rb, _, _) in enumerate(flat):
-                if i != j:
-                    cost[i, j] = self.data.point_dist(ea, ra, eb, rb)
+        if "cost" in x:
+            cost = np.asarray(x["cost"], dtype=np.float64)
+            if cost.shape != (n, n):
+                raise ValueError(f"case {cid} cost shape {cost.shape} != {(n,n)}")
+        else:
+            cost = np.zeros((n, n), dtype=np.float64)
+            for i, (ea, ra, _, _) in enumerate(flat):
+                for j, (eb, rb, _, _) in enumerate(flat):
+                    if i != j:
+                        cost[i, j] = self.data.point_dist(ea, ra, eb, rb)
         out = {
             "cid": cid,
             "coords": ((x["points"] - self.coord_mean) / self.coord_std).astype(np.float32),
