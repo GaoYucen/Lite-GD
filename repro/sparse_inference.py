@@ -215,7 +215,6 @@ class SparseOnlineLiteGD:
         event=torch.as_tensor(case["event"],device=dev,dtype=torch.long)[None,:]
         coords=torch.as_tensor(case["coords"],device=dev,dtype=torch.float32)[None,:,:]
         valid=torch.ones(1,len(case["event"]),device=dev,dtype=torch.bool)
-        target=torch.as_tensor(case["target"],device=dev,dtype=torch.long)[None,:]
         ne=torch.tensor([case["n_events"]],device=dev,dtype=torch.long)
         cost=torch.as_tensor(case["road_cost"],device=dev,dtype=torch.float32)[None,:,:]
         pred=self.model.decoder.infer(e2spec[None,:,:],edge_idx,event,coords,valid,ne,cost)
