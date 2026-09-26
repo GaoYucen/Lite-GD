@@ -556,8 +556,8 @@ class HierarchicalRoadMetricDecoderFast(HierarchicalRoadMetricDecoder):
         return sum(losses)/max(1,len(losses)),torch.stack(preds,1)
 
     @torch.no_grad()
-    def infer(self,edge_h,edge_idx,event,coords,valid,n_events,road_cost):
-        """Target-free online decoding; returns only greedy candidate indices."""
+    def infer(self,edge_h,edge_idx,event,coords,valid,n_events,road_cost,steps=None):
+        """Target-free online decoding with all current-conditioned metrics precomputed."""
         rep,pair_feat=self._represent(edge_h,edge_idx,coords,valid,road_cost)
         B,N,H=rep.shape
         ar=torch.arange(B,device=rep.device)
@@ -569,36 +569,44 @@ class HierarchicalRoadMetricDecoderFast(HierarchicalRoadMetricDecoder):
         preds=[]
 
         ev=event.clamp(min=0,max=5)
-        hot=nn.functional.one_hot(ev,num_classes=6).to(rep.dtype)
+        hot=nn.functional.one_hot(ev,num_classes=6).to(rep.dtype)   # B,N,6
         hot=hot*((event>=0)&valid).unsqueeze(-1).to(rep.dtype)
         hot_b=hot.bool()
-        cnt=hot.sum(1).clamp_min(1.0)
+        cnt=hot.sum(1).clamp_min(1.0)                              # B,6
         present=hot_b.any(1)
         pooled=torch.einsum("bnh,bne->beh",rep,hot)/cnt.unsqueeze(-1)
         event_base=self.event_rep(pooled)+self.event_emb.weight.unsqueeze(0)
         cand_base=self.metric_cand(rep)
 
-        for step in range(int(n_events.max().item())):
-            step_pair=pair_feat[ar,current]
-            fwd=step_pair[...,0];rev=step_pair[...,1]
-            inf=torch.full_like(fwd[:,:,None],1e9)
-            min_f=torch.where(hot_b,fwd[:,:,None],inf).amin(1)
-            min_r=torch.where(hot_b,rev[:,:,None],inf).amin(1)
-            mean_f=torch.einsum("bn,bne->be",fwd,hot)/cnt
-            min_f=torch.where(present,min_f,torch.zeros_like(min_f))
-            min_r=torch.where(present,min_r,torch.zeros_like(min_r))
-            stat=torch.stack([min_f,mean_f,min_r],dim=-1)
+        # Precompute every possible current -> event statistic and current ->
+        # candidate metric once. N is only the flattened candidate-set size.
+        fwd=pair_feat[...,0]                                       # B,C,N
+        rev=pair_feat[...,1]
+        mask=hot_b[:,None,:,:]                                     # B,1,N,6
+        inf=torch.full_like(fwd[:,:,:,None],1e9)
+        min_f=torch.where(mask,fwd[:,:,:,None],inf).amin(2)        # B,C,6
+        min_r=torch.where(mask,rev[:,:,:,None],inf).amin(2)
+        mean_f=torch.einsum("bcn,bne->bce",fwd,hot)/cnt[:,None,:]
+        min_f=torch.where(present[:,None,:],min_f,torch.zeros_like(min_f))
+        min_r=torch.where(present[:,None,:],min_r,torch.zeros_like(min_r))
+        stat_all=torch.stack([min_f,mean_f,min_r],dim=-1)          # B,C,6,3
+        event_metric_all=self.event_metric(stat_all)               # B,C,6,H
+        cand_metric_all=self.step_metric(pair_feat)                 # B,C,N,H
 
+        nsteps=int(n_events.max().item()) if steps is None else int(steps)
+        for step in range(nsteps):
+            emetric=event_metric_all[ar,current]
             event_score=self.event_v(torch.tanh(
-                event_base+self.event_state(state)[:,None,:]+self.event_metric(stat)
+                event_base+self.event_state(state)[:,None,:]+emetric
             )).squeeze(-1)
             precedence_bad=torch.zeros_like(done)
             precedence_bad[:,1::2]=~done[:,0::2]
             event_score=event_score.masked_fill((~present)|done|precedence_bad,-1e9)
             chosen_event=event_score.argmax(1)
 
+            cmetric=cand_metric_all[ar,current]
             cand_score=self.metric_v(torch.tanh(
-                cand_base+self.metric_state(state)[:,None,:]+self.step_metric(step_pair)
+                cand_base+self.metric_state(state)[:,None,:]+cmetric
             )).squeeze(-1)
             cand_score=cand_score.masked_fill((~valid)|(event!=chosen_event[:,None]),-1e9)
             pred=cand_score.argmax(1);preds.append(pred)
