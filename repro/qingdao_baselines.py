@@ -7,7 +7,7 @@ import torch
 
 from qingdao_dataset import QingdaoSCCExact
 from baseline_carpool import CarpoolCases, train_pointer, evaluate, seed_all
-from paper_baselines import Graph2RouteCarpool, train_g2r, disgreedy_paper, _evaluate_sequence
+from paper_baselines import Graph2RouteCarpool, train_g2r, evaluate_g2r, disgreedy_paper
 from am_fidelity import train as train_am_fidelity
 
 
@@ -64,7 +64,7 @@ def main():
         model,hist=train_g2r(a,data,cases,tr,va,device)
         result={"model":"graph2route","seed":a.seed,"history":hist,
                 "train_cases":len(tr),"validation_cases":len(va),"test_cases":len(te),
-                "test":evaluate(model,cases,te,data,device,a.eval_batch)}
+                "test":evaluate_g2r(model,cases,te,data,device,a.eval_batch)}
     else:
         model,result=train_am_fidelity(a,data,device)
         result["train_cases"]=len(tr);result["validation_cases"]=len(va);result["test_cases"]=len(te)
