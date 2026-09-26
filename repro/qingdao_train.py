@@ -66,6 +66,7 @@ def main():
     ap.add_argument("--hidden",type=int,default=64)
     ap.add_argument("--metric-layers",type=int,default=2)
     ap.add_argument("--metric-heads",type=int,default=4)
+    ap.add_argument("--litegd-arch",choices=["legacy","road_metric","road_metric_hier"],default="road_metric_hier")
     ap.add_argument("--batch",type=int,default=8)
     ap.add_argument("--eval-batch",type=int,default=8)
     ap.add_argument("--epochs",type=int,default=50)
@@ -82,7 +83,7 @@ def main():
     va=subset(va,a.val_limit,a.seed+13)
     te=subset(te,a.test_limit,a.seed+17)
     dev=torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model=QingdaoLiteGD(data,a.hidden,a.metric_layers,a.metric_heads).to(dev)
+    model=QingdaoLiteGD(data,a.hidden,a.metric_layers,a.metric_heads,a.litegd_arch).to(dev)
 
     # Warm RF cache for the selected pilot/full split and report actual local sizes.
     tprep=time.perf_counter();sample_stats=[]
@@ -124,7 +125,7 @@ def main():
     model.load_state_dict(best_state)
     test=evaluate(model,data,te,dev,a.eval_batch)
     elapsed=time.perf_counter()-start
-    out={"model":"Lite-GD-Hier-Qingdao-local-exact","protocol":data.meta["protocol"],
+    out={"model":"Lite-GD-Qingdao-local-exact","litegd_arch":a.litegd_arch,"protocol":data.meta["protocol"],
       "seed":a.seed,"train_cases":len(tr),"validation_cases":len(va),"test_cases":len(te),
       "hidden":a.hidden,"metric_layers":a.metric_layers,"metric_heads":a.metric_heads,
       "best_epoch":best_epoch,"val_gap":best,"test":test,"history":history,
