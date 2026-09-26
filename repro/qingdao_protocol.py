@@ -18,42 +18,68 @@ import argparse,gzip,json
 from pathlib import Path
 import numpy as np
 
-def read_labels(path):
+def _xy(s):
+    a,b=s.split(",");return float(a),float(b)
+
+def _geo_error(a,b):
+    if len(a)!=len(b):return 1e99
+    return sum((_xy(x)[0]-_xy(y)[0])**2+(_xy(x)[1]-_xy(y)[1])**2 for x,y in zip(a,b))
+
+def read_label_records(path):
+    """Preserve duplicate case IDs and reconstruct route-ordered coordinates."""
     out={}
     with open(path) as f:
-        for line in f:
+        for line_no,line in enumerate(f):
             z=line.split()
-            if len(z)<2: continue
-            out[int(z[0])]=[int(x) for x in z[1].split(",")]
+            if len(z)<5:continue
+            cid=int(z[0]);seq=[int(x) for x in z[1].split(",")]
+            canon=[z[2][1:-1]]
+            for tok in z[3:]:
+                for x in tok.split("to"):canon.append(x[1:-1])
+            sem={-1:canon[0]}
+            for e in range(len(canon)-1):sem[e]=canon[e+1]
+            try:ordered=[sem[x] for x in seq]
+            except KeyError:continue
+            out.setdefault(cid,[]).append({
+                "seq":seq,"ordered_geo":ordered,"line_no":line_no,"used":False
+            })
     return out
 
 def parse_cases(base):
-    labels=read_labels(base/"carpool_route_point_qingdao_20221010_scc_ds")
-    cases=[]
+    labels=read_label_records(base/"carpool_route_point_qingdao_20221010_scc_ds")
+    cases=[];matched_error=[]
     with open(base/"carpool_route_point_qingdao_20221010_res_add_multi_link_valid_scc_ds") as f:
-        for line in f:
+        for row_no,line in enumerate(f):
             p=line.rstrip("\n").split("\t")
-            if len(p)!=3: continue
+            if len(p)!=3:continue
             cid=int(p[0])
-            if cid not in labels: continue
-            geos=[tuple(map(float,x.split(","))) for x in p[1].split(";")]
+            geos_s=p[1].split(";")
+            geos=[tuple(map(float,x.split(","))) for x in geos_s]
             groups=[[int(v) for v in g.split(",") if v] for g in p[2].split(";")]
-            seq=labels[cid]
-            if len(seq)!=len(groups) or -1 not in seq: continue
+            cand=[q for q in labels.get(cid,[]) if (not q["used"]) and len(q["seq"])==len(groups)]
+            if not cand:
+                # Fallback for rare source duplicates where label multiplicity is
+                # lower than travel multiplicity: reuse the closest same-length
+                # label rather than silently deleting a valid order.
+                cand=[q for q in labels.get(cid,[]) if len(q["seq"])==len(groups)]
+            if not cand:continue
+            q=min(cand,key=lambda z:_geo_error(geos_s,z["ordered_geo"]))
+            q["used"]=True;seq=q["seq"];matched_error.append(_geo_error(geos_s,q["ordered_geo"]))
+            if len(seq)!=len(groups) or -1 not in seq:continue
             ne=len(seq)-1
-            if ne not in (4,6): continue
-            # reorder groups by semantic code: driver, event 0..ne-1
+            if ne not in (4,6):continue
             dpos=seq.index(-1)
-            driver_group=groups[dpos]; driver_geo=geos[dpos]
-            ev_groups=[];ev_geos=[]
-            ok=True
+            driver_group=groups[dpos];driver_geo=geos[dpos]
+            ev_groups=[];ev_geos=[];ok=True
             for e in range(ne):
                 if e not in seq:ok=False;break
                 k=seq.index(e);ev_groups.append(groups[k]);ev_geos.append(geos[k])
             if not ok or not driver_group or any(not g for g in ev_groups):continue
             raw_order=[x for x in seq if x!=-1]
-            cases.append(dict(case_id=cid,driver_link=int(driver_group[0]),
-                driver_geo=driver_geo,event_groups=ev_groups,event_geos=ev_geos,
+            cases.append(dict(case_id=cid,source_row=row_no,label_line=q["line_no"],
+                label_geo_sq_error=float(matched_error[-1]),
+                driver_link=int(driver_group[0]),driver_geo=driver_geo,
+                event_groups=ev_groups,event_geos=ev_geos,
                 raw_event_order=raw_order,passengers=ne//2))
     return cases
 
@@ -121,7 +147,7 @@ def cmd_prepare(a):
     np.concatenate(qsrc).astype(np.uint32).tofile(out/"query_src.u32")
     np.concatenate(qdst).astype(np.uint32).tofile(out/"query_dst.u32")
     with gzip.open(out/"query_cases.json.gz","wt") as f:json.dump(meta,f)
-    m={"protocol":"qingdao-scc-link-midpoint-v1","node_count":int(len(np.load(base/"node_ids.npy"))),
+    m={"protocol":"qingdao-scc-link-midpoint-v2","node_count":int(len(np.load(base/"node_ids.npy"))),
        "edge_count":int(len(link_ids)),"case_count":len(meta),"query_count":int(offset),
        "weight_field":"link_info column 5","ratio_assumption":0.5,
        "driver_rule":"first link in raw driver map-match group"}
@@ -168,13 +194,13 @@ def cmd_finalize(a):
     ids=np.arange(len(rows));rng=np.random.default_rng(20260925);rng.shuffle(ids)
     n=len(ids);ntr=int(.8*n);nva=int(.1*n)
     split={"train":ids[:ntr].tolist(),"validation":ids[ntr:ntr+nva].tolist(),"test":ids[ntr+nva:].tolist()}
-    diag={"protocol":"qingdao-scc-link-midpoint-v1","cases":n,
+    diag={"protocol":"qingdao-scc-link-midpoint-v2","cases":n,
       "raw_event_order_exact_pct":100*raw_match/max(n,1),
       "raw_event_order_mean_gap_pct":float(np.mean(raw_gap)),
       "raw_event_order_median_gap_pct":float(np.median(raw_gap)),
       "mean_exact_length":float(np.mean(opt_lengths)),"median_exact_length":float(np.median(opt_lengths)),
       "split_sizes":{k:len(v) for k,v in split.items()}}
-    metadata={"protocol":"qingdao-scc-link-midpoint-v1","split":split,"diagnostic":diag,
+    metadata={"protocol":"qingdao-scc-link-midpoint-v2","split":split,"diagnostic":diag,
       "graph_dir":str(base),"arrays":"benchmark_arrays.npz","cases":"cases.json.gz"}
     (out/"metadata.json").write_text(json.dumps(metadata,indent=2)+"\n")
     print(json.dumps(diag,sort_keys=True))
