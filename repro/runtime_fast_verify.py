@@ -20,11 +20,11 @@ def bench_model(model,cpu_batches,device,warm=10):
     gpu_batches=[move(b,device) for b in cpu_batches]
     model.eval()
     with torch.no_grad():
-        for b in gpu_batches[:warm]: model.decoder_loss(b,teacher=False)
+        for b in gpu_batches[:warm]: model.predict(b)
         torch.cuda.synchronize();model_ms=[]
         for b in gpu_batches:
             torch.cuda.synchronize();t=time.perf_counter()
-            model.decoder_loss(b,teacher=False)
+            model.predict(b)
             torch.cuda.synchronize();model_ms.append((time.perf_counter()-t)*1000)
     return stat(model_ms)
 
@@ -74,8 +74,8 @@ def main():
     with torch.no_grad():
         for cid in te:
             b=move(next(iter(loaders(data,[cid],1,shuffle=False,seed=a.seed))),dev)
-            lo,po=old.decoder_loss(b,teacher=False)
-            lf,pf=fast.decoder_loss(b,teacher=False)
+            lo,po=old.predict(b)
+            lf,pf=fast.predict(b)
             mismatches+=int(not torch.equal(po,pf))
             max_loss_abs=max(max_loss_abs,abs(float(lo)-float(lf)))
 

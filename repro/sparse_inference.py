@@ -218,4 +218,5 @@ class SparseOnlineLiteGD:
         target=torch.as_tensor(case["target"],device=dev,dtype=torch.long)[None,:]
         ne=torch.tensor([case["n_events"]],device=dev,dtype=torch.long)
         cost=torch.as_tensor(case["road_cost"],device=dev,dtype=torch.float32)[None,:,:]
-        return self.model.decoder(e2spec[None,:,:],edge_idx,event,coords,valid,target,ne,cost,False),meta
+        pred=self.model.decoder.infer(e2spec[None,:,:],edge_idx,event,coords,valid,ne,cost)
+        return pred,meta
