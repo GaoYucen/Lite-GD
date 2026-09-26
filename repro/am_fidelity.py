@@ -123,7 +123,7 @@ def train(args, data, device):
         # Validation is cheap (100 pilot cases), so evaluate every epoch for a
         # faithful rollout baseline update and keep a coarser history printout.
         vm = evaluate(model, cases, va, data, device, args.eval_batch)
-        vscore = float(vm["mean_case_gap"])
+        vscore = float(vm["gap"])
 
         # Rollout baseline update: after warmup, keep a frozen copy of the
         # strongest validation policy so the control variate does not chase the
@@ -151,7 +151,7 @@ def train(args, data, device):
                 "mean_abs_advantage": float(np.mean(advantages)),
                 "val": vm,
                 "baseline_updated": baseline_updated,
-                "baseline_val_mean_case_gap": baseline_val if np.isfinite(baseline_val) else None,
+                "baseline_val_gap": baseline_val if np.isfinite(baseline_val) else None,
             }
             history.append(rec)
             print("AM_FIDELITY_VAL", json.dumps(rec, sort_keys=True), flush=True)
@@ -174,7 +174,7 @@ def train(args, data, device):
         "split_seed": args.split_seed,
         "best_epoch": best_epoch,
         "stop_epoch": ep,
-        "val_mean_case_gap": best,
+        "val_gap": best,
         "history": history,
         "test": test,
     }
