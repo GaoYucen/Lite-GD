@@ -555,6 +555,60 @@ class HierarchicalRoadMetricDecoderFast(HierarchicalRoadMetricDecoder):
 
         return sum(losses)/max(1,len(losses)),torch.stack(preds,1)
 
+    @torch.no_grad()
+    def infer(self,edge_h,edge_idx,event,coords,valid,n_events,road_cost):
+        """Target-free online decoding; returns only greedy candidate indices."""
+        rep,pair_feat=self._represent(edge_h,edge_idx,coords,valid,road_cost)
+        B,N,H=rep.shape
+        ar=torch.arange(B,device=rep.device)
+        denom=valid.sum(1,keepdim=True).clamp_min(1).to(rep.dtype)
+        graph=(rep*valid.unsqueeze(-1)).sum(1)/denom
+        state=torch.tanh(self.init_state(torch.cat([rep[:,0],graph],dim=-1)))
+        current=torch.zeros(B,dtype=torch.long,device=rep.device)
+        done=torch.zeros(B,6,dtype=torch.bool,device=rep.device)
+        preds=[]
+
+        ev=event.clamp(min=0,max=5)
+        hot=nn.functional.one_hot(ev,num_classes=6).to(rep.dtype)
+        hot=hot*((event>=0)&valid).unsqueeze(-1).to(rep.dtype)
+        hot_b=hot.bool()
+        cnt=hot.sum(1).clamp_min(1.0)
+        present=hot_b.any(1)
+        pooled=torch.einsum("bnh,bne->beh",rep,hot)/cnt.unsqueeze(-1)
+        event_base=self.event_rep(pooled)+self.event_emb.weight.unsqueeze(0)
+        cand_base=self.metric_cand(rep)
+
+        for step in range(int(n_events.max().item())):
+            step_pair=pair_feat[ar,current]
+            fwd=step_pair[...,0];rev=step_pair[...,1]
+            inf=torch.full_like(fwd[:,:,None],1e9)
+            min_f=torch.where(hot_b,fwd[:,:,None],inf).amin(1)
+            min_r=torch.where(hot_b,rev[:,:,None],inf).amin(1)
+            mean_f=torch.einsum("bn,bne->be",fwd,hot)/cnt
+            min_f=torch.where(present,min_f,torch.zeros_like(min_f))
+            min_r=torch.where(present,min_r,torch.zeros_like(min_r))
+            stat=torch.stack([min_f,mean_f,min_r],dim=-1)
+
+            event_score=self.event_v(torch.tanh(
+                event_base+self.event_state(state)[:,None,:]+self.event_metric(stat)
+            )).squeeze(-1)
+            precedence_bad=torch.zeros_like(done)
+            precedence_bad[:,1::2]=~done[:,0::2]
+            event_score=event_score.masked_fill((~present)|done|precedence_bad,-1e9)
+            chosen_event=event_score.argmax(1)
+
+            cand_score=self.metric_v(torch.tanh(
+                cand_base+self.metric_state(state)[:,None,:]+self.step_metric(step_pair)
+            )).squeeze(-1)
+            cand_score=cand_score.masked_fill((~valid)|(event!=chosen_event[:,None]),-1e9)
+            pred=cand_score.argmax(1);preds.append(pred)
+            active=step<n_events
+            if active.any():
+                done[ar[active],chosen_event[active]]=True
+            state=self.gru(rep[ar,pred],state)
+            current=pred
+        return torch.stack(preds,1)
+
 
 class Model(nn.Module):
     def __init__(self,data,h=64,decoder_arch="legacy",metric_layers=2,metric_heads=4):
@@ -599,6 +653,15 @@ class Model(nn.Module):
             return self.decoder(eh,b["edge_idx"],b["event"],b["coords"],b["valid"],
                                 b["target"],b["n_events"],b["road_cost"],teacher)
         return self.decoder(eh,b["edge_idx"],b["event"],b["coords"],b["valid"],b["target"],b["n_events"],teacher)
+
+    @torch.no_grad()
+    def predict(self,b):
+        _,eh=self.encode(b)
+        if self.decoder_arch=="road_metric_hier_fast":
+            return self.decoder.infer(eh,b["edge_idx"],b["event"],b["coords"],b["valid"],
+                                      b["n_events"],b["road_cost"])
+        _,p=self.decoder_loss(b,teacher=False)
+        return p
 
 def _candidate_road_cost(data,x):
     cache=getattr(data,"_candidate_cost_cache",None)
