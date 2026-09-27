@@ -18,16 +18,19 @@ All methods below are evaluated on the same test split within each reconstructed
 
 **Metrics.** Gap is the route-length gap to the exact optimum (lower is better). Event-order Exact requires the complete predicted pickup/drop-off event sequence to match the optimum (higher is better).
 
-### Published Lite-GD reference
+### Published reference table
 
-For context, the published Lite-GD table reports:
+For context, the published comparison table reports the following values:
 
-| Dataset | Reported Gap ↓ | Reported Accuracy ↑ |
-|---|---:|---:|
-| Chengdu | 4.85% | 80.26% |
-| Qingdao | 6.54% | 84.04% |
+| Method | Chengdu Gap ↓ | Chengdu Accuracy ↑ | Qingdao Gap ↓ | Qingdao Accuracy ↑ |
+|---|---:|---:|---:|---:|
+| DisGreedy | 22.85% | 41.21% | 23.18% | 45.37% |
+| PointerNet | 12.92% | 59.34% | 12.25% | 63.11% |
+| AM | 9.30% | 62.57% | 8.35% | 65.73% |
+| Graph2Route | 11.50% | 44.35% | 10.80% | 48.12% |
+| **Lite-GD** | **4.85%** | **80.26%** | **6.54%** | **84.04%** |
 
-The Chengdu reconstruction closely matches the published route-gap result. The Qingdao reproduction uses the recovered million-edge road graph with a link-midpoint adaptation and a group-safe split, so its absolute numbers should not be treated as a direct reproduction of the original Qingdao protocol.
+The Chengdu reconstruction closely matches the published Lite-GD route-gap result. The Qingdao reproduction uses the recovered million-edge road graph with a link-midpoint adaptation and a group-safe split, so its absolute numbers should not be treated as a direct reproduction of the original Qingdao protocol.
 
 ## Benchmark protocols
 
