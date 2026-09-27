@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Higher-fidelity AM training for Lite-GD baseline reproduction.
+"""Higher-fidelity AM training for the Lite-GD baseline suite.
 
 The original Kool et al. Attention Model trains with REINFORCE and a rollout
 baseline (with exponential warmup).  The earlier Lite-GD cross-graph baseline

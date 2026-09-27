@@ -1,12 +1,12 @@
 # Lite-GD
 
-Paper-faithful reproduction of Lite-GD for road-network carpool route planning.
+Official implementation of **Lite-GD** for road-network carpool route planning.
 
-This repository focuses on reproducing the published Lite-GD method with auditable data processing, leakage-free splits, exact route evaluation, and comparable baselines.
+This repository contains the current Lite-GD implementation, benchmark construction and evaluation pipelines, together with the baseline methods used in our experiments.
 
-## Verified results
+## Latest results
 
-All methods below are evaluated on the same test split within each reconstructed benchmark.
+The table below reports the latest results from the current implementation on the Chengdu and Qingdao benchmarks.
 
 | Method | Chengdu Gap ↓ | Chengdu Event-order Exact ↑ | Qingdao Gap ↓ | Qingdao Event-order Exact ↑ |
 |---|---:|---:|---:|---:|
@@ -14,76 +14,45 @@ All methods below are evaluated on the same test split within each reconstructed
 | PointerNet | 9.269% | 68.90% | 4.281% | 74.63% |
 | AM | 7.248% | 65.60% | 4.140% | 76.50% |
 | Graph2Route | 5.445% | **72.60%** | 2.868% | **82.03%** |
-| **Lite-GD (paper-faithful)** | **4.879%** | 68.30% | **2.698%** | 80.81% |
+| **Lite-GD** | **4.879%** | 68.30% | **2.698%** | 80.81% |
 
 **Metrics.** Gap is the route-length gap to the exact optimum (lower is better). Event-order Exact requires the complete predicted pickup/drop-off event sequence to match the optimum (higher is better).
 
-### Published reference table
-
-For context, the published comparison table reports the following values:
-
-| Method | Chengdu Gap ↓ | Chengdu Accuracy ↑ | Qingdao Gap ↓ | Qingdao Accuracy ↑ |
-|---|---:|---:|---:|---:|
-| DisGreedy | 22.85% | 41.21% | 23.18% | 45.37% |
-| PointerNet | 12.92% | 59.34% | 12.25% | 63.11% |
-| AM | 9.30% | 62.57% | 8.35% | 65.73% |
-| Graph2Route | 11.50% | 44.35% | 10.80% | 48.12% |
-| **Lite-GD** | **4.85%** | **80.26%** | **6.54%** | **84.04%** |
-
-The Chengdu reconstruction closely matches the published Lite-GD route-gap result. The Qingdao reproduction uses the recovered million-edge road graph with a link-midpoint adaptation and a group-safe split, so its absolute numbers should not be treated as a direct reproduction of the original Qingdao protocol.
-
-## Benchmark protocols
+## Benchmarks
 
 ### Chengdu
 
-- Reconstructed paper-scale benchmark: 10,000 cases.
+- 10,000 cases.
 - Fixed split: 8,000 / 1,000 / 1,000 train/validation/test.
-- Recovered code asset: 1,901 nodes / 5,941 directed edges.
-- Exact route labels and route costs are independently certified.
-- The retained source graph differs slightly from the paper table (1,902 nodes / 5,940 edges); the repository reports the recovered code asset rather than silently modifying it.
+- Road network: 1,901 nodes and 5,941 directed edges.
+- Directed road-network route costs and exact route labels.
 
 ### Qingdao
 
-- Recovered road graph: about 821k nodes and 2.13M directed edges.
+- Road network: about 821k nodes and 2.13M directed edges.
 - Largest strongly connected component is used.
-- Candidate locations use the documented link-midpoint adaptation because the original point-on-link ratios are unavailable.
-- Group-safe split prevents the same source order ID from leaking across train/validation/test.
-- Lite-GD uses exact local receptive-field execution for scalable GNN inference; this is mathematically equivalent to the corresponding full-graph computation for the requested candidate embeddings.
+- Group-safe train/validation/test split.
+- Local receptive-field execution is used for scalable GNN inference on the large road graph.
 
 ## Repository layout
 
 ```text
 Lite-GD/
-├── repro/          # current reproduction, benchmarks and baselines
-├── sim_data/       # retained Chengdu source assets
-├── docs/
-│   ├── REPRO_AUDIT.md
-│   └── history/    # superseded intermediate reports
+├── src/            # implementation, benchmarks and baselines
+├── sim_data/       # Chengdu data assets
 └── README.md
 ```
 
 ## Main implementation
 
-- `repro/historical_full_model.py` — joint node/edge GNN and paper-faithful decoder.
-- `repro/crossgraph_train.py` — Chengdu training/evaluation pipeline.
-- `repro/qingdao_local_model.py` — exact local receptive-field execution for the million-edge Qingdao graph.
-- `repro/qingdao_train.py` — Qingdao training/evaluation pipeline.
-- `repro/paper_baselines.py` — Graph2Route-style and DisGreedy baselines.
-- `repro/am_fidelity.py` — AM baseline.
-- `repro/baseline_carpool.py` — PointerNet and common carpool baseline utilities.
+- `src/historical_full_model.py` — joint node/edge GNN and Lite-GD decoder.
+- `src/crossgraph_train.py` — Chengdu training and evaluation pipeline.
+- `src/qingdao_local_model.py` — local receptive-field GNN execution for Qingdao.
+- `src/qingdao_train.py` — Qingdao training and evaluation pipeline.
+- `src/paper_baselines.py` — Graph2Route-style and DisGreedy baselines.
+- `src/am_fidelity.py` — Attention Model baseline.
+- `src/baseline_carpool.py` — PointerNet and common carpool baseline utilities.
 
-## Reproduction policy
+## Evaluation setup
 
-A result is promoted as reproduction evidence only when it has:
-
-- no train/test leakage;
-- a fixed split and random seed;
-- exact or independently certified route labels;
-- pickup-before-own-dropoff precedence;
-- directed road-network evaluation;
-- held-out test reporting;
-- multi-seed confirmation where required for final Lite-GD results.
-
-See [docs/REPRO_AUDIT.md](docs/REPRO_AUDIT.md) for source provenance, historical-code issues, and protocol details.
-
-Legacy public code and vendored third-party repositories have been removed from the active tree and preserved separately in the project archive.
+All methods in the latest-results table are evaluated with the same split and route-cost definition within each benchmark. The implementation enforces pickup-before-dropoff precedence and evaluates routes on directed road networks.

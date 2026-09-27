@@ -14,7 +14,7 @@ from historical_chengdu import load_edges, load_orders, load_labels, recover_cas
 
 # Four historical cases cannot be assigned uniquely from the retained source
 # files: the old selected edge is shared by two same-parity candidate groups.
-# Final reproduction metrics exclude them instead of arbitrarily choosing one
+# Final metrics exclude them instead of arbitrarily choosing one
 # semantic passenger mapping.
 AMBIGUOUS_GROUP_CASES={51,244,620,873}
 

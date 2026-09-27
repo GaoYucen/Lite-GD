@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "name": "Lite-GD cross-graph reproduction protocol",
+  "name": "Lite-GD cross-graph protocol",
   "source": "recovered historical Chengdu edge+ratio benchmark, 996 retained cases",
   "source_stats_commit": "7c4905f6b08802c2b8c25ff626021efd1da81570",
   "design": {

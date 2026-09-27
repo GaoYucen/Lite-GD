@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate reproducible 2-passenger carpool benchmarks on directed road graphs.
+"""Generate 2-passenger carpool benchmarks on directed road graphs.
 
 The generator preserves the recovered Chengdu task scale while changing the
 underlying road graph:

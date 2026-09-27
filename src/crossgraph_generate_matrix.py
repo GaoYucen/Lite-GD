@@ -367,7 +367,7 @@ def main():
             "dropoff_ratio": 0.999,
             "driver_ratio": 0.5,
             "precedence": "each pickup precedes its own dropoff",
-            "primary_goal": "graph-scale reproduction with two passengers fixed",
+            "primary_goal": "graph-scale evaluation with two passengers fixed",
             "full_route_supervision": bool(args.predecessor is not None),
         },
     }

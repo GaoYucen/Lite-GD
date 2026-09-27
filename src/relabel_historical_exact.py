@@ -140,7 +140,7 @@ def main():
     # The historical stored route_length uses a different legacy metric.
     # Do not compare it numerically with the regenerated point-on-edge exact
     # length here. Legacy selected routes are audited under one unified metric
-    # by repro/audit_historical_exact.py.
+    # by src/audit_historical_exact.py.
     changed=np.asarray([x["legacy_selected_edges"]!=x["exact_selected_edges"] for x in out])
     inter=np.asarray([
       any(seq.index(2*p+1)<max(seq.index(2*q) for q in range(x["passenger_count"]))

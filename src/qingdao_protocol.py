@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and finalize the Qingdao-SCC Lite-GD reproduction benchmark.
+"""Build and finalize the Qingdao-SCC Lite-GD benchmark.
 
 Protocol:
 * maximum strongly connected directed road graph;
@@ -7,7 +7,7 @@ Protocol:
 * vehicle start uses the first map-matched link in its raw group;
 * each passenger candidate is represented by one directed link;
 * because the uploaded asset does not contain endpoint coordinates / original
-  point-on-link ratios, the reproducible primary objective places a candidate
+  point-on-link ratios, the primary objective places a candidate
   at the midpoint of its link:
       0.5*w(a) + dist(head(a), tail(b)) + 0.5*w(b)
   with zero self-transition.

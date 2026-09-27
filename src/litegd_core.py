@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Paper-aligned Lite-GD core diagnostic on the archived simplified Chengdu set.
+"""Lite-GD core diagnostic on the archived simplified Chengdu set.
 
 This experiment intentionally isolates the two central online ingredients that
 are actually specified by the WWW/TMC papers and can be tested with the
