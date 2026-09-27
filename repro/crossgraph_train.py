@@ -23,7 +23,7 @@ def train_litegd(args,data,device):
     val=loaders(data,va,args.litegd_batch,shuffle=False,seed=args.seed)
     test=loaders(data,te,args.litegd_batch,shuffle=False,seed=args.seed)
 
-    model=Model(data,args.hidden).to(device)
+    model=Model(data,args.hidden,decoder_arch=args.litegd_arch).to(device)
     opt=torch.optim.AdamW(model.parameters(),lr=args.pre_lr,weight_decay=1e-4)
     curve=[]
     for ep in range(1,args.pre_epochs+1):
@@ -96,6 +96,7 @@ def main():
 
     # Candidate-aware Lite-GD fixed Phase-A protocol.
     ap.add_argument("--hidden",type=int,default=64)
+    ap.add_argument("--litegd-arch",choices=["legacy","paper_faithful"],default="paper_faithful")
     ap.add_argument("--litegd-batch",type=int,default=8)
     ap.add_argument("--pre-epochs",type=int,default=8)
     ap.add_argument("--pre-lr",type=float,default=1e-3)

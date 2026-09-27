@@ -254,12 +254,95 @@ class PaperDecoder(nn.Module):
             state=self.gru(rep[torch.arange(B,device=rep.device),choose],state)
         return sum(loss)/max(1,len(loss)),torch.stack(preds,1)
 
+class PaperFaithfulDecoder(PaperDecoder):
+    """Paper-aligned geometry crossover without road-network metric features.
+
+    Restores the thesis description more literally than PaperDecoder:
+    - candidate-to-candidate Haversine distance row;
+    - bearing from each candidate to the centroid of each semantic event group;
+    - geometry/graph gated crossover;
+    - flat pointer decoding with the original precedence mask.
+    """
+    def __init__(self,h,max_points):
+        super().__init__(h,max_points)
+        d=h//2
+        # Six semantic event groups at most (2/3-passenger setting), represented
+        # by sin/cos bearing to each group's coordinate centroid.
+        self.fa_group=nn.Linear(12,d)
+
+    def faithful_domain(self,coords,event,valid):
+        lon=torch.deg2rad(coords[...,0]);lat=torch.deg2rad(coords[...,1])
+        dlat=lat[:,None,:]-lat[:,:,None];dlon=lon[:,None,:]-lon[:,:,None]
+        hh=torch.sin(dlat/2)**2+torch.cos(lat[:,:,None])*torch.cos(lat[:,None,:])*torch.sin(dlon/2)**2
+        dist=6371000*2*torch.asin(torch.sqrt(hh.clamp(0,1)))/10000.0
+        B,N,_=dist.shape;M=self.max_points
+        dv=torch.zeros(B,N,M,device=coords.device,dtype=coords.dtype)
+        pair=valid[:,:,None]&valid[:,None,:]
+        dv[:,:,:N]=dist*pair
+
+        # Mean lon/lat of each semantic candidate set, as described in the paper.
+        angle_feat=torch.zeros(B,N,12,device=coords.device,dtype=coords.dtype)
+        for e in range(6):
+            mask=(event==e)&valid
+            cnt=mask.sum(1,keepdim=True).clamp_min(1).to(coords.dtype)
+            center=(coords*mask.unsqueeze(-1).to(coords.dtype)).sum(1)/cnt
+            clon=torch.deg2rad(center[:,0])[:,None]
+            clat=torch.deg2rad(center[:,1])[:,None]
+            dlon_c=clon-lon
+            y=torch.sin(dlon_c)*torch.cos(clat)
+            x=torch.cos(lat)*torch.sin(clat)-torch.sin(lat)*torch.cos(clat)*torch.cos(dlon_c)
+            ang=torch.atan2(y,x)
+            has=mask.any(1)[:,None]
+            angle_feat[:,:,2*e]=torch.where(has,torch.sin(ang),torch.zeros_like(ang))
+            angle_feat[:,:,2*e+1]=torch.where(has,torch.cos(ang),torch.zeros_like(ang))
+        angle_feat*=valid.unsqueeze(-1).to(coords.dtype)
+        return torch.tanh(self.fd(dv))*torch.tanh(self.fa_group(angle_feat))
+
+    def forward(self,edge_h,edge_idx,event,coords,valid,target,n_events,teacher=True):
+        B,N=edge_idx.shape;H=edge_h.size(-1)
+        cand=torch.gather(edge_h,1,edge_idx.unsqueeze(-1).expand(-1,-1,H))
+        fc=self.faithful_domain(coords,event,valid)
+        gfc=torch.sigmoid(self.gfc1(fc)+self.gfc2(cand))
+        ge=torch.sigmoid(self.ge1(fc)+self.ge2(cand))
+        rep=torch.tanh(self.merge(torch.cat([gfc*fc,ge*cand],-1)))
+        state=rep[:,0]
+        done=torch.zeros(B,6,dtype=torch.bool,device=rep.device)
+        loss=[];preds=[];ar=torch.arange(B,device=rep.device)
+        for t in range(target.size(1)):
+            score=self.v(torch.tanh(self.cand(rep)+self.state(state)[:,None,:])).squeeze(-1)
+            bad=~valid | (event<0)
+            for b in range(B):
+                if t>=int(n_events[b]):
+                    bad[b]=True;continue
+                for j in range(N):
+                    et=int(event[b,j])
+                    if et<0:continue
+                    if done[b,et] or (et%2==1 and not done[b,et-1]):
+                        bad[b,j]=True
+            score=score.masked_fill(bad,-1e9);p=score.argmax(1);preds.append(p)
+            active=target[:,t]!=-100
+            if active.any():loss.append(nn.functional.cross_entropy(score[active],target[active,t]))
+            choose=torch.where(active & teacher,target[:,t],p)
+            for b in range(B):
+                if active[b]:
+                    et=int(event[b,choose[b]])
+                    if et>=0:done[b,et]=True
+            state=self.gru(rep[ar,choose],state)
+        return sum(loss)/max(1,len(loss)),torch.stack(preds,1)
+
+
 class Model(nn.Module):
-    def __init__(self,data,h=64):
+    def __init__(self,data,h=64,decoder_arch="paper_faithful"):
         super().__init__()
         self.encoder=JointEncoder(data.node_feat,data.edge_base,data.src,data.dst,h)
         self.node_head=nn.Linear(h,2);self.edge_head=nn.Linear(h,4)
-        self.decoder=PaperDecoder(h,data.max_points)
+        self.decoder_arch=decoder_arch
+        if decoder_arch=="legacy":
+            self.decoder=PaperDecoder(h,data.max_points)
+        elif decoder_arch=="paper_faithful":
+            self.decoder=PaperFaithfulDecoder(h,data.max_points)
+        else:
+            raise ValueError(f"unknown decoder_arch={decoder_arch}")
     def encode(self,b):return self.encoder(b["role"],b["ratio"])
     def pretrain_loss(self,b,balanced=True):
         nh,eh=self.encode(b)

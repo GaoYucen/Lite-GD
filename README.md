@@ -67,3 +67,7 @@ A result is only promoted as evidence if it has:
 - multi-seed confirmation for final comparisons.
 
 See the audit/results documents for exact commits, caveats and experiment outputs.
+
+## Reproduction branch
+
+The default main branch preserves the conference/reproduction line. The paper-faithful implementation and benchmark adapters live under repro/. Subsequent research extensions are maintained separately on journal/full.

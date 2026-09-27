@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from historical_full_model import JointEncoder, HierarchicalRoadMetricDecoderFast
+from historical_full_model import JointEncoder, PaperDecoder, PaperFaithfulDecoder
 
 
 class LocalJointEncoder(JointEncoder):
@@ -140,11 +140,18 @@ class LocalJointEncoder(JointEncoder):
 
 
 class QingdaoLiteGD(nn.Module):
-    def __init__(self,data,h=64,metric_layers=2,metric_heads=4):
+    """Paper-faithful Lite-GD with exact local receptive-field execution."""
+
+    def __init__(self,data,h=64,decoder_arch="paper_faithful"):
         super().__init__()
         self.encoder=LocalJointEncoder(data.node_feat,data.edge_base,data.src,data.dst,h)
-        self.decoder=HierarchicalRoadMetricDecoderFast(
-            h,data.max_points,layers=metric_layers,heads=metric_heads)
+        self.decoder_arch=decoder_arch
+        if decoder_arch=="legacy":
+            self.decoder=PaperDecoder(h,data.max_points)
+        elif decoder_arch=="paper_faithful":
+            self.decoder=PaperFaithfulDecoder(h,data.max_points)
+        else:
+            raise ValueError(f"unknown decoder_arch={decoder_arch}")
 
     def encode_cases(self,data,ids):
         rfs=[data.receptive_field(int(cid)) for cid in ids]
@@ -160,7 +167,7 @@ class QingdaoLiteGD(nn.Module):
         edge_idx=torch.arange(N,device=eh.device,dtype=torch.long)[None,:].expand(B,-1)
         return self.decoder(
             eh,edge_idx,b["event"],b["coords"],b["valid"],b["target"],
-            b["n_events"],b["road_cost"],teacher)
+            b["n_events"],teacher)
 
     @torch.no_grad()
     def predict_batch(self,data,ids,b):
@@ -168,5 +175,8 @@ class QingdaoLiteGD(nn.Module):
         eh=torch.stack(reps,dim=0)
         B,N,_=eh.shape
         edge_idx=torch.arange(N,device=eh.device,dtype=torch.long)[None,:].expand(B,-1)
-        return self.decoder.infer(
-            eh,edge_idx,b["event"],b["coords"],b["valid"],b["n_events"],b["road_cost"])
+        _,p=self.decoder(
+            eh,edge_idx,b["event"],b["coords"],b["valid"],b["target"],
+            b["n_events"],False)
+        return p
+
