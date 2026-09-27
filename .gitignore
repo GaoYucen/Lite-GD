@@ -1,0 +1,29 @@
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Experiment outputs
+outputs/
+runs/
+checkpoints/
+artifacts/
+*.log
+
+# Large generated matrices / datasets
+*.npy
+*.npz
+*.pth
+*.pt
